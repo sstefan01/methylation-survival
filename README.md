@@ -99,7 +99,6 @@ The `config.yaml` file controls various aspects of the scripts, including file p
 
 * **Paths:** Ensure all paths in the `data:` section correctly point to your downloaded/placed data files relative to the project root. Update `inference.input_model_path` to your pre-trained model file.
 * **Run Setup:** The `run_setup:` section defines which cohorts are used for training (`training_cohorts`) and which single cohort is used for testing (`test_cohort`) when running `train.py`/`inference.py`/`evaluate.py`. It also lists the `feature_types` to load and concatenate.
-* **Columns:** Verify the column names (`time_column`, `event_column`, `clinical_feature_col`, `id_column`, optional `os_time_column`, `os_event_column`) match the headers in your `.csv` files.
 * **Hyperparameters:** Model structure and training parameters are defined here.
 
 ## Usage

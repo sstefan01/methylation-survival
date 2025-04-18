@@ -77,6 +77,6 @@ training:
 
 # --- Inference Settings ---
 inference:
-  input_model_path: "models/trained_survival_model_statedict.pt" #"models/mantismb_model_weights.pt" # Your pre-trained model
-  output_predictions_path: "results/trained_model_predictions.csv" #"results/survival_predictions.csv"
+  input_model_path: "models/mantismb_model_weights.pt" 
+  output_predictions_path: "results/survival_predictions.csv"
   batch_size: 64

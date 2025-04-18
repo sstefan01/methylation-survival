@@ -1,0 +1,82 @@
+# config.yaml
+
+# --- Data Files and Settings ---
+data:
+  # --- Connectivity Matrix ---
+  conn_mat_path: "data/conn_mat_beta.csv"
+  conn_mat_is_one_based: True
+
+  # --- Raw Data Paths (One per cohort/data type) ---
+  # Add entries for all files needed based on your load_beta_cnv.py functions
+  # Example structure:
+  icgc_beta_path: "data/beta_icgc.csv"
+  icgc_cnv_path: "data/cnv_icgc.csv"
+  icgc_surv_path: "data/surv_icgc.csv"
+
+  cav_beta_path: "data/beta_cavalli.csv"
+  cav_cnv_path: "data/cnv_cavalli.csv"
+  cav_surv_path: "data/surv_cavalli.csv"
+
+  sturm_beta_path: "data/beta_sturm.csv"
+  sturm_cnv_path: "data/cnv_sturm.csv"
+  sturm_surv_path: "data/surv_sturm.csv"
+
+  northcott_beta_path: "data/beta_northcott.csv"
+  northcott_cnv_path: "data/cnv_northcott.csv"
+  northcott_surv_path: "data/surv_northcott.csv"
+
+  # --- Column Names within Survival/Clinical Files ---
+  time_column: "pfs_time"       # Column name for survival time
+  event_column: "pfs_event"     # Column name for event indicator (1=event, 0=censored)
+  clinical_feature_col: "m"     # Column name for the clinical feature (metastasis)
+  id_column: "Patient_ID"
+  os_time_column: "time"
+  os_event_column: "event"
+
+  # --- Time Bins ---
+  time_bins: [0.019167, 0.33333, 0.5847, 0.75, 0.94167, 1.1667, 1.5, 1.8333, 2.0833, 2.5833, 3.25, 3.9, 5.6667, 8.2875, 22.0]
+
+# --- Run Setup ---
+run_setup:
+  # Define cohorts for training and the single cohort for testing in this run
+  training_cohorts: ["cav", "northcott", "sturm"]
+  test_cohort: "icgc"
+  # Define which feature types to load and concatenate
+  feature_types: ["beta", "cnv"]
+  # Define how the clinical feature (metastasis) is recoded
+  metastasis_recoding: { "from": 0, "to": -1 }
+
+# --- Model Architecture and Hyperparameters ---
+model:
+  part1:
+    input_dim: 373759
+    layer_dims: [16067, 1602, 421, 64]
+    dropout_rate: 0.27232343593317115
+    c2_input_offset: 357692
+
+  part2:
+    num_time_bins: 15
+    dropout_rate: 0.2927068153242416
+
+  combined:
+    num_clinical_features: 1 # Only metastasis status ('m')
+    clinical_feature_weight: -4.4
+
+
+# --- Training Settings ---
+training:
+  output_model_dir: "models/"
+  output_model_name: "trained_survival_model.pt"
+  learning_rate: 6.956454443744261e-06
+  epochs: 20
+  batch_size: 32
+  optimizer: "Adam"
+  weight_decay: 0.052438696339463575
+
+
+
+# --- Inference Settings ---
+inference:
+  input_model_path: "models/trained_survival_model_statedict.pt" #"models/mantismb_model_weights.pt" # Your pre-trained model
+  output_predictions_path: "results/trained_model_predictions.csv" #"results/survival_predictions.csv"
+  batch_size: 64

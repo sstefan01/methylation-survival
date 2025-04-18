@@ -1,16 +1,15 @@
-# src/utils.py (Complete file with corrected test block)
+# src/utils.py
 
 import torch
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 from typing import Tuple, Optional, Union, List
-import os # For file creation/cleanup in test block
-import warnings # To potentially ignore Dask warnings if needed
-import shutil # For removing test directory
+import os
+import warnings
+import shutil
 
-# Define a type alias for clarity in function signatures (Removed for Python < 3.10 compatibility)
-# TensorOrArray: TypeAlias = Union[torch.Tensor, np.ndarray]
+
 
 # --- Connectivity Matrix Loading ---
 def load_connectivity_matrix(
@@ -24,7 +23,6 @@ def load_connectivity_matrix(
     Loads the connectivity matrix from a CSV file using Dask, performs processing
     (indexing adjustment, transpose, concatenation with diagonal),
     and validates dimensions.
-    (Implementation from previous steps - assuming correct)
     """
     if not os.path.exists(csv_path):
         raise ValueError(f"Connectivity matrix file not found at: {csv_path}")
@@ -108,7 +106,6 @@ def encode_survival(time: Union[torch.Tensor, np.ndarray],
                     bins: Union[torch.Tensor, np.ndarray]) -> torch.Tensor:
     """
     Encodes survival time and event status into a target tensor for MTLR loss.
-    (Implementation from previous steps - assuming correct)
     """
     # Ensure inputs are torch tensors
     if isinstance(time, np.ndarray): time = torch.from_numpy(np.atleast_1d(time))
@@ -139,7 +136,6 @@ def encode_survival(time: Union[torch.Tensor, np.ndarray],
 def masked_logsumexp(x: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> torch.Tensor:
     """
     Computes log(sum(exp(x))) over elements identified by mask. Stable.
-    (Implementation from previous steps - assuming correct)
     """
     mask_bool = mask.bool()
     masked_x = torch.where(mask_bool, x, torch.full_like(x, -float('inf')))
@@ -148,7 +144,7 @@ def masked_logsumexp(x: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> torc
     # Replace -inf max_val with 0 for subtraction stability, but handle result later
     max_val_stable = torch.where(is_all_inf, torch.zeros_like(max_val), max_val)
     term = torch.exp(x - max_val_stable)
-    sum_exp = torch.sum(term * mask, dim=dim) # Use original mask
+    sum_exp = torch.sum(term * mask, dim=dim)
     # Clamp sum_exp to avoid log(0)
     log_sum_exp = torch.log(torch.clamp_min(sum_exp, torch.finfo(sum_exp.dtype).tiny)) + max_val_stable.squeeze(dim)
     # Ensure result is -inf if all masked inputs were -inf
@@ -158,7 +154,6 @@ def masked_logsumexp(x: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> torc
 def mtlr_neg_log_likelihood(logits: torch.Tensor, target: torch.Tensor, average: bool = False) -> torch.Tensor:
     """
     Computes the Negative Log Likelihood loss for the MTLR model.
-    (Implementation from previous steps - assuming correct)
     """
     target = target.float()
     censored = target.sum(dim=1) > 1; uncensored = ~censored
@@ -178,7 +173,6 @@ def mtlr_neg_log_likelihood(logits: torch.Tensor, target: torch.Tensor, average:
 def mtlr_survival(logits: torch.Tensor) -> torch.Tensor:
     """
     Calculates the survival function P(T > t) from MTLR logits.
-    (Implementation from previous steps - user provided)
     """
     density = torch.softmax(logits, dim=1)
     G = torch.tril(torch.ones(logits.size(1), logits.size(1), dtype=torch.float32)).to(logits.device)
@@ -197,7 +191,6 @@ def load_beta_features(path: str) -> torch.Tensor:
             warnings.simplefilter("ignore")
             features_np = ddf.compute().values
         features_torch = torch.from_numpy(features_np).float()
-        # Original code transposes: rows=samples, columns=features AFTER transpose
         features_torch = torch.transpose(features_torch, 0, 1)
         print(f"Loaded beta features shape: {features_torch.shape}")
         return features_torch
@@ -215,7 +208,6 @@ def load_cnv_features(path: str) -> torch.Tensor:
             warnings.simplefilter("ignore")
             features_np = ddf.compute().values
         features_torch = torch.from_numpy(features_np).float()
-        # Original code transposes: rows=samples, columns=features AFTER transpose
         features_torch = torch.transpose(features_torch, 0, 1)
         print(f"Loaded CNV features shape: {features_torch.shape}")
         return features_torch
@@ -224,7 +216,7 @@ def load_cnv_features(path: str) -> torch.Tensor:
         raise
 
 def load_survival_data(path: str, time_col: str, event_col: str, clinical_col: str, id_col: Optional[str] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[np.ndarray]]:
-    """Loads survival time, event, and one clinical feature (e.g., metastasis) from CSV using Pandas."""
+    """Loads survival time, event, and metastasis from CSV using Pandas."""
     if not os.path.exists(path): raise FileNotFoundError(f"Survival/Clinical file not found: {path}")
     print(f"Loading survival/clinical data from: {path}")
     try:
@@ -273,15 +265,14 @@ def normalize_instance_wise(data: torch.Tensor, eps: float = 1e-8) -> torch.Tens
     sample_mean = torch.mean(data, dim=1, keepdim=True) # Shape [n_samples, 1]
 
     # Subtract the sample's own mean
-    data_centered = data - sample_mean # Broadcasting happens
+    data_centered = data - sample_mean
 
     # Calculate std dev across feature dimension (dim=1) for each sample
-    # Using unbiased=False to match torch.std default when dim is specified
     sample_std = torch.std(data_centered, dim=1, keepdim=True, unbiased=False) # Shape [n_samples, 1]
 
     # Handle samples with zero standard deviation (e.g., constant features)
     # Avoid division by zero by using the epsilon, or potentially clamping std dev
-    sample_std = torch.clamp_min(sample_std, eps) # Clamp std dev instead of just adding eps? Adding eps is common.
+    sample_std = torch.clamp_min(sample_std, eps)
 
     # Normalize by the sample's own std dev
     data_norm = data_centered / (sample_std + eps) # Add epsilon for stability
@@ -291,8 +282,7 @@ def normalize_instance_wise(data: torch.Tensor, eps: float = 1e-8) -> torch.Tens
         num_nan = torch.isnan(data_norm).sum().item()
         num_inf = torch.isinf(data_norm).sum().item()
         print(f"Warning: NaNs ({num_nan}) or Infs ({num_inf}) detected after instance-wise normalization. Check input data or epsilon.")
-        # Optionally replace NaNs/Infs, e.g., with 0
-        # data_norm = torch.nan_to_num(data_norm, nan=0.0, posinf=0.0, neginf=0.0)
+
 
     return data_norm
 
@@ -300,7 +290,6 @@ def normalize_instance_wise(data: torch.Tensor, eps: float = 1e-8) -> torch.Tens
 # --- Test block ---
 if __name__ == '__main__':
     print("\n--- Running src/utils.py tests ---")
-    # Use a temporary directory for dummy files
     test_dir = "temp_utils_test_data"
     if os.path.exists(test_dir): shutil.rmtree(test_dir) # Clean up previous run if needed
     os.makedirs(test_dir)
@@ -318,7 +307,6 @@ if __name__ == '__main__':
             np.random.randint(1, dummy_in_features_conn + 1, 1000)  # 1 to 500
         ], axis=1)
         pd.DataFrame(dummy_conns_conn).to_csv(dummy_csv_path_conn, header=False, index=False)
-        # print(f"Created dummy CSV: {dummy_csv_path_conn}")
 
         conn_mat = load_connectivity_matrix(
             csv_path=dummy_csv_path_conn,
@@ -335,9 +323,7 @@ if __name__ == '__main__':
         print("load_connectivity_matrix test passed.")
     except Exception as e:
         print(f"Error testing load_connectivity_matrix: {e}")
-        # raise # Comment out raise during debugging if needed
     finally:
-        # Cleanup handled by shutil.rmtree at the end
         pass
 
 
@@ -360,7 +346,6 @@ if __name__ == '__main__':
             'EVENT': np.random.randint(0, 2, n_samples_ll),
             'METASTASIS': np.random.randint(0, 2, n_samples_ll).astype(np.float32)
         }).to_csv(dummy_surv_path, index=False)
-        # print(f"Created dummy data files in {test_dir}")
 
         # Test loaders
         beta_data = load_beta_features(dummy_beta_path)
@@ -388,7 +373,6 @@ if __name__ == '__main__':
     try:
         n_samples_norm_test = 5
         n_features_norm_test = 10
-        # Create dummy data with known means/std devs if possible, or just random
         dummy_data_norm = torch.randn(n_samples_norm_test, n_features_norm_test, dtype=torch.float32)
         # Add an offset to make means non-zero
         dummy_data_norm += torch.randn(n_samples_norm_test, 1) * 5
@@ -434,7 +418,7 @@ if __name__ == '__main__':
     num_output_dims_loss = num_time_bins_loss + 1 # K = 16
     dummy_logits_loss = torch.randn(batch_size_loss, num_output_dims_loss) # Shape [4, 16]
 
-    # --- CORRECTED Dummy target tensor generation ---
+    # --- Dummy target tensor generation ---
     print(f"Generating dummy target for loss test with shape: ({batch_size_loss}, {num_output_dims_loss})")
     dummy_target_loss = torch.zeros(batch_size_loss, num_output_dims_loss, dtype=torch.float32)
     # Example data points (ensure indices are within 0 to 15, matching K=16 output dims)
@@ -443,10 +427,9 @@ if __name__ == '__main__':
     if num_output_dims_loss > 0: dummy_target_loss[2, 0] = 1.0 # Event at bin 0
     if num_output_dims_loss > 2: dummy_target_loss[3, 2:] = 1.0 # Censored after bin 1
     print("Dummy target for loss test generated.")
-    # --- End Correction ---
 
     try:
-        # Test loss calculation (using the CORRECTED dummy_target_loss)
+        # Test loss calculation
         loss = mtlr_neg_log_likelihood(dummy_logits_loss, dummy_target_loss, average=False)
         loss_avg = mtlr_neg_log_likelihood(dummy_logits_loss, dummy_target_loss, average=True)
         print(f"Loss calculation successful. Total: {loss.item()}, Average: {loss_avg.item()}")

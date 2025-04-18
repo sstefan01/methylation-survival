@@ -13,12 +13,10 @@ import warnings
 import json
 import shutil
 
-# --- Add src directory to path ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(script_dir, "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
-# --- End Path Addition ---
 
 # --- Third-party imports ---
 try: from lifelines.utils import concordance_index
@@ -79,7 +77,7 @@ def main(args):
     except Exception as e: print(f"Error loading predictions CSV {pred_path}: {e}"); raise
 
     # --- 3. Load True Survival Data (Test Set) ---
-    try: # Load test survival data (t_test_np, e_test_np)
+    try:
         test_cohort = test_cohort_from_config # Use cohort from config
         print(f"Evaluating Test Cohort: '{test_cohort}' (from config)")
         default_time_col = config['data']['time_column']; default_event_col = config['data']['event_column']
@@ -99,7 +97,7 @@ def main(args):
     # --- 4. Load True Survival Data (Training Set - Needed for AUC) ---
     print("Loading true survival data for training cohorts...")
     t_train_list, e_train_list = [], []
-    try: # Load training survival data (t_train_np, e_train_np)
+    try:
         training_cohorts = config['run_setup']['training_cohorts']; t_col_train = config['data']['time_column']
         e_col_train = config['data']['event_column']; id_col_train = config['data'].get('id_column', None)
         clinical_col_train = config['data']['clinical_feature_col']
@@ -121,9 +119,9 @@ def main(args):
     print(f"Evaluating metrics at {len(eval_times)} time points...")
 
     # --- 6. Interpolate Survival Probabilities ---
-    print("Interpolating survival probabilities (Standard Linear)...")
+    print("Interpolating survival probabilities...")
     interpolated_probs = np.zeros((n_test_samples, len(eval_times)))
-    for i in range(n_test_samples): # ... (interpolation loop) ...
+    for i in range(n_test_samples):
         y_interp_this_sample = predictions_k[i, :]; x_interp_base = pred_times
         try: interp_func = interp1d(x_interp_base, y_interp_this_sample, kind='linear', bounds_error=False, fill_value=(y_interp_this_sample[0], y_interp_this_sample[-1]))
         except ValueError as e: print(f"Warn: Interp failed sample {i}: {e}"); interpolated_probs[i, :] = np.nan; continue
@@ -162,7 +160,7 @@ def main(args):
               if np.any(valid_mask_c1):
                    risk_scores_cindex = -probs_for_cindex[valid_mask_c1] # Define C-index specific score
                    t_test_c = t_test_np[valid_mask_c1]; e_test_c = e_test_np[valid_mask_c1]
-                   print(f"Using -S(t={eval_times[idx_cindex]:.1f}) [SMOOTHED] as risk score for C-index.")
+                   print(f"Using -S(t={eval_times[idx_cindex]:.1f}) as risk score for C-index.")
                    if len(risk_scores_cindex) > 0:
                        try: c_index = concordance_index(t_test_c, -risk_scores_cindex, e_test_c.astype(bool))
                        except Exception as e: print(f"Error C-index: {e}")
@@ -171,7 +169,7 @@ def main(args):
          else: print(f"Cannot get C-index prob at t={eval_time_cindex:.1f}.")
     print(f"C-index: {c_index:.4f}")
 
-    # --- 8. Calculate Time-Dependent AUC (Using 2D Time-Varying Risk Score) ---
+    # --- 8. Calculate Time-Dependent AUC  ---
     print("\n--- Calculating Time-dependent AUC ---")
     auc_mean_all = np.nan; auc_values_all = None; auc_eval_times_filtered = np.array([])
     auc_mean_target_range = np.nan
@@ -222,10 +220,9 @@ def main(args):
                  print(f"Calculating AUC specifically for target range: [{auc_eval_times_target.min():.2f}, {auc_eval_times_target.max():.2f}]")
                  risk_scores_auc_target = risk_scores_auc_filtered[:, target_range_mask_in_filtered]
 
-                 # Call cumulative_dynamic_auc again with filtered times and filtered 2D scores
                  _, auc_mean_target_range = cumulative_dynamic_auc(
-                      survival_train_sks, survival_test_sks, # Use full test set survival info
-                      estimate=risk_scores_auc_target, # Use 2D scores for this range
+                      survival_train_sks, survival_test_sks,
+                      estimate=risk_scores_auc_target,
                       times=auc_eval_times_target
                  )
                  print(f"Mean time-dependent AUC (0.5y - 5.0y, time-varying risk): {auc_mean_target_range:.4f}")
@@ -265,10 +262,9 @@ def main(args):
 
 
     # --- 10. Save or Display Results ---
-    # ... (remains the same, saves calculated metrics to JSON) ...
     if args.output_metrics:
-        auc_times_list_save = auc_eval_times_filtered.tolist(); # Use filtered times for overall AUC
-        results = { # Store results
+        auc_times_list_save = auc_eval_times_filtered.tolist()
+        results = {
             "c_index": c_index if not np.isnan(c_index) else None,
             "auc_mean_over_data_range": auc_mean_all if not np.isnan(auc_mean_all) else None,
             "auc_mean_0.5_to_5_years": auc_mean_target_range if not np.isnan(auc_mean_target_range) else None,
@@ -283,7 +279,7 @@ def main(args):
         output_dir_metrics = os.path.dirname(args.output_metrics);
         if output_dir_metrics and not os.path.exists(output_dir_metrics): os.makedirs(output_dir_metrics)
         try:
-             import json;
+             import json
              with open(args.output_metrics, 'w') as f:
                   json.dump(results, f, indent=4, default=lambda x: float(x) if isinstance(x, (np.float_, np.float32, np.float64)) else (None if np.isnan(x) else x) if isinstance(x, float) else x.tolist() if isinstance(x, np.ndarray) else x.__str__())
              print(f"Evaluation metrics saved to: {args.output_metrics}")

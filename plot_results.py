@@ -10,10 +10,9 @@ import os
 import sys
 from typing import List, Optional, Tuple
 from scipy.interpolate import interp1d
-from scipy.interpolate import PchipInterpolator
 
 def load_config(config_path):
-    """Loads the YAML configuration file with basic validation."""
+    """Loads the YAML configuration file"""
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found at: {config_path}")
     print(f"Loading configuration from: {config_path}")
@@ -82,7 +81,6 @@ def plot_metric_curve(times: List[float], metric_values: List[float], metric_nam
 
 def main(args):
     # --- 1. Load Config ---
-    # Config is needed for time_bins if plotting survival, and potentially default pred path
     config = load_config(args.config)
 
     # --- 2. Create Output Directory ---
@@ -134,7 +132,7 @@ def main(args):
         print("No metrics file provided or loaded. Skipping AUC and Brier plots.")
 
 
-    # --- 4. Plot Survival Curves (Optional, Needs Config & Predictions) ---
+    # --- 4. Plot Survival Curves ---
     if args.plot_survival:
         # Determine prediction file path
         pred_path = args.predictions_file or config['inference'].get('output_predictions_path')
@@ -161,7 +159,6 @@ def main(args):
                     predictions=predictions,
                     pred_times=pred_times,
                     output_path=os.path.join(args.output_dir, "survival_curves.png")
-                    # Smoothing window defaults to 10 in function definition
                 )
             except KeyError:
                  print("Error: Cannot plot survival curves. Missing 'data.time_bins' in config.")

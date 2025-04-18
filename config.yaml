@@ -6,12 +6,11 @@ data:
   conn_mat_path: "data/conn_mat_beta.csv"
   conn_mat_is_one_based: True
 
-  # --- Raw Data Paths (One per cohort/data type) ---
-  # Add entries for all files needed based on your load_beta_cnv.py functions
-  # Example structure:
-  icgc_beta_path: "data/beta_icgc.csv"
-  icgc_cnv_path: "data/cnv_icgc.csv"
-  icgc_surv_path: "data/surv_icgc.csv"
+  # --- Raw Data Paths  ---
+
+  jones_beta_path: "data/beta_jones.csv"
+  jones_cnv_path: "data/cnv_jones.csv"
+  jones_surv_path: "data/surv_jones.csv"
 
   cav_beta_path: "data/beta_cavalli.csv"
   cav_cnv_path: "data/cnv_cavalli.csv"
@@ -40,7 +39,7 @@ data:
 run_setup:
   # Define cohorts for training and the single cohort for testing in this run
   training_cohorts: ["cav", "northcott", "sturm"]
-  test_cohort: "icgc"
+  test_cohort: "jones"
   # Define which feature types to load and concatenate
   feature_types: ["beta", "cnv"]
   # Define how the clinical feature (metastasis) is recoded

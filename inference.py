@@ -4,18 +4,15 @@ import argparse
 import yaml
 import torch
 import numpy as np
-import pandas as pd # For saving CSV output
+import pandas as pd
 import os
 import sys
 from torch.utils.data import TensorDataset, DataLoader
 
-# --- Add src directory to path ---
-# This allows importing from src.model and src.utils
 script_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(script_dir, "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
-# --- End Path Addition ---
 
 # --- Project and third-party imports ---
 try:
@@ -24,8 +21,8 @@ try:
         load_connectivity_matrix,
         load_beta_features,
         load_cnv_features,
-        load_survival_data, # Assumes this accepts id_col and returns t, e, m, ids
-        normalize_instance_wise, # Instance-wise normalizer
+        load_survival_data,
+        normalize_instance_wise,
         mtlr_survival
     )
 except ImportError as e:
@@ -37,7 +34,7 @@ except Exception as e:
      sys.exit(1)
 
 def load_config(config_path):
-    """Loads the YAML configuration file with basic validation."""
+    """Loads the YAML configuration file."""
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found at: {config_path}")
     print(f"Loading configuration from: {config_path}")
@@ -45,7 +42,6 @@ def load_config(config_path):
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
         print("Configuration loaded successfully.")
-        # Basic validation (add more checks as needed)
         required_sections = ['data', 'run_setup', 'model', 'inference']
         for section in required_sections:
             if section not in config: raise ValueError(f"Missing section '{section}'")
@@ -98,14 +94,12 @@ def main(args):
         print(f"Error loading connectivity matrix: {e}")
         sys.exit(1)
 
-    # --- 5. Load Test Data Features (Separate Tensors) ---
+    # --- 5. Load Test Data Features ---
     print(f"Loading features for test cohort '{test_cohort}'...")
     x_test_beta = None
     x_test_cnv = None
-    # Add placeholders for other potential feature types if needed
 
     try:
-        # Load specified feature types into separate variables
         if "beta" in feature_types:
             beta_path_key = f"{test_cohort}_beta_path"
             if beta_path_key not in config['data']: raise ValueError(f"Path key '{beta_path_key}' not found")
@@ -114,13 +108,12 @@ def main(args):
             cnv_path_key = f"{test_cohort}_cnv_path"
             if cnv_path_key not in config['data']: raise ValueError(f"Path key '{cnv_path_key}' not found")
             x_test_cnv = load_cnv_features(config['data'][cnv_path_key])
-        # Load other feature types similarly...
 
     except (ValueError, FileNotFoundError, Exception) as e:
         print(f"Error loading test features: {e}")
         sys.exit(1)
 
-    # --- 6. Apply Instance-wise Normalization SEPARATELY ---
+    # --- 6. Apply Instance-wise Normalization ---
     x_test_norm_list = [] # List to hold normalized feature tensors
 
     if x_test_beta is not None:
@@ -131,12 +124,11 @@ def main(args):
         print(f"Applying instance-wise normalization to CNV features (shape: {x_test_cnv.shape})...")
         x_test_cnv_norm = normalize_instance_wise(x_test_cnv)
         x_test_norm_list.append(x_test_cnv_norm)
-    # Normalize other feature types here and append to list...
 
     if not x_test_norm_list:
         raise ValueError("No features were loaded or normalized.")
 
-    # --- 7. Concatenate NORMALIZED Features ---
+    # --- 7. Concatenate Normalized Features ---
     x_test_norm_concat = torch.cat(x_test_norm_list, dim=1)
     print(f"Concatenated normalized test features shape: {x_test_norm_concat.shape}")
 
@@ -145,7 +137,7 @@ def main(args):
         raise ValueError(f"Dimension Mismatch: Final normalized features dim ({x_test_norm_concat.shape[1]}) "
                          f"!= model input dim ({model_input_dim})")
 
-    # --- 8. Load Clinical Feature AND Patient IDs ---
+    # --- 8. Load Clinical Feature and Patient IDs ---
     print(f"Loading clinical data and IDs for test cohort '{test_cohort}'...")
     patient_ids_test = None # Initialize
     try:
@@ -153,12 +145,10 @@ def main(args):
         if surv_path_key not in config['data']: raise ValueError(f"Path key '{surv_path_key}' not found")
         test_surv_path = config['data'][surv_path_key]
 
-        # Use OS or default columns for time/event
         t_col_test = config['data'].get('os_time_column', config['data']['time_column'])
         e_col_test = config['data'].get('os_event_column', config['data']['event_column'])
         clinical_col = config['data']['clinical_feature_col']
 
-        # Load T, E, M, and potentially IDs
         _, _, m_test, patient_ids_test_loaded = load_survival_data(
             test_surv_path, t_col_test, e_col_test, clinical_col, id_col_name # Pass ID col name
         )
@@ -172,20 +162,20 @@ def main(args):
          print(f"Error loading clinical/survival data: {e}")
          sys.exit(1)
 
-    # Reshape and recode clinical feature 'm'
+    # Reshape and recode metastasis
     m_test = m_test.reshape(-1, 1)
     val_from = config['run_setup']['metastasis_recoding']['from']
     val_to = config['run_setup']['metastasis_recoding']['to']
-    print(f"Recoding clinical feature '{clinical_col_name}': {val_from} -> {val_to}")
+    print(f"Recoding '{clinical_col_name}': {val_from} -> {val_to}")
     m_test[m_test == val_from] = val_to
-    print(f"Prepared clinical feature shape: {m_test.shape}")
+    print(f"Prepared metastasis shape: {m_test.shape}")
 
     # Check sample counts
     n_samples = x_test_norm_concat.shape[0]
     if n_samples != m_test.shape[0]:
-        raise ValueError(f"Sample count mismatch: Features ({n_samples}) vs Clinical ({m_test.shape[0]})")
+        raise ValueError(f"Sample count mismatch: features ({n_samples}) vs metastasis ({m_test.shape[0]})")
     if patient_ids_test is not None and n_samples != len(patient_ids_test):
-        raise ValueError(f"Sample count mismatch: Features ({n_samples}) vs Patient IDs ({len(patient_ids_test)})")
+        raise ValueError(f"Sample count mismatch: features ({n_samples}) vs patient ids ({len(patient_ids_test)})")
 
     # --- 9. Instantiate Model ---
     print("Instantiating model structure...")
@@ -211,10 +201,8 @@ def main(args):
     print(f"Loading model state_dict from: {model_path}")
     try:
         state_dict = torch.load(model_path, map_location=device)
-        # Use strict=False to handle potential minor mismatches like the clinical_weight buffer
         load_result = model.load_state_dict(state_dict, strict=False)
         print(f"Model state_dict loaded. Missing keys: {load_result.missing_keys}. Unexpected keys: {load_result.unexpected_keys}")
-        # Add warnings if unexpected keys or non-buffer missing keys are found
         if load_result.unexpected_keys:
              print("Warning: Model loaded with unexpected keys in state_dict. Check compatibility.")
         missing_non_buffer = [k for k in load_result.missing_keys if 'clinical_weight' not in k] # Example check
@@ -227,8 +215,7 @@ def main(args):
 
     # --- 11. Prepare DataLoader ---
     batch_size = config['inference']['batch_size']
-    # Use the correctly normalized & concatenated features
-    x_test_final = x_test_norm_concat.to(device) # Move final features to device
+    x_test_final = x_test_norm_concat.to(device)
     m_test = m_test.to(device)
     test_dataset = TensorDataset(x_test_final, m_test)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
@@ -240,7 +227,6 @@ def main(args):
     print("Starting inference loop...")
     with torch.no_grad():
         for i, (batch_x_main, batch_x_clinical) in enumerate(test_loader):
-            # Data should be on device from DataLoader if tensors were moved before Dataset creation
             logits = model(batch_x_main, batch_x_clinical)
             survival_probs = mtlr_survival(logits)
             all_predictions.append(survival_probs.cpu().numpy())

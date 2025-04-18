@@ -4,25 +4,20 @@ import argparse
 import yaml
 import torch
 import numpy as np
-# import pandas as pd # Not strictly needed unless used in utils funcs called
 import os
 import sys
 import random
-# from torch.utils.data import TensorDataset, DataLoader # DataLoader no longer used
 import torch.optim as optim
 import warnings # For suppressing Dask warnings if needed
 
-# --- Add src directory to path ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(script_dir, "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
-# --- End Path Addition ---
 
 # --- Project Imports ---
 try:
-    # Use the class name defined in your src/model.py
-    from model import CombinedSurvivalModel # Or Comb_model_both_met if you kept that name
+    from model import CombinedSurvivalModel
     from utils import (
         load_connectivity_matrix,
         load_beta_features,
@@ -50,7 +45,7 @@ def load_config(config_path):
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
         print("Configuration loaded successfully.")
-        # Basic validation (add more checks as needed)
+        # Basic validation
         required_sections = ['data', 'run_setup', 'model', 'training']
         for section in required_sections:
             if section not in config: raise ValueError(f"Missing required section '{section}'")
@@ -63,8 +58,6 @@ def load_config(config_path):
         required_training_keys = ['epochs', 'batch_size', 'learning_rate', 'weight_decay', 'optimizer', 'output_model_dir', 'output_model_name']
         for key in required_training_keys:
              if key not in config['training']: raise ValueError(f"Missing required key 'training.{key}'")
-        # Check necessary paths exist based on run_setup
-        # ... (add path checks as needed) ...
         return config
     except Exception as e:
         print(f"Error loading or parsing configuration file {config_path}: {e}")
@@ -139,7 +132,6 @@ def main(args):
     # --- 4. Load Connectivity Matrix ---
     print("Loading connectivity matrix...")
     try:
-        # <<< CORRECTED CALL START >>>
         conn_mat_path = config['data']['conn_mat_path']
         # Get features from config (ensure model section is loaded and keys exist)
         out_features = config['model']['part1']['layer_dims'][0]
@@ -155,7 +147,6 @@ def main(args):
             is_one_based=one_based        # Pass value
         ).to(device) # Move to device
         print("Connectivity matrix loaded.")
-        # <<< CORRECTED CALL END >>>
     except KeyError as e:
         print(f"Error: Missing required key {e} in config file needed for loading connectivity matrix.")
         sys.exit(1)
@@ -167,7 +158,6 @@ def main(args):
     # --- 5. Instantiate Model ---
     print("Instantiating model...")
     try:
-        # Use the class name defined in src/model.py (ensure it matches if you renamed it)
         model = CombinedSurvivalModel(
             part1_input_dim=config['model']['part1']['input_dim'],
             conn_mat=conn_mat, # Pass the loaded conn_mat
@@ -178,12 +168,10 @@ def main(args):
             part2_num_time_bins=config['model']['part2']['num_time_bins'],
             part2_dropout_rate=config['model']['part2']['dropout_rate']
         ).to(device)
-        # print(model) # Optionally print model summary
     except Exception as e: print(f"Error instantiating model: {e}"); sys.exit(1)
 
 
     # --- 6. Setup Optimizer ---
-    # ... (as before) ...
     try:
          lr = config['training']['learning_rate']; wd = config['training']['weight_decay']; opt_name = config['training']['optimizer']
          if opt_name.lower() == "adam": optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
@@ -192,20 +180,10 @@ def main(args):
     except Exception as e: print(f"Error setting up optimizer: {e}"); sys.exit(1)
 
 
-    # --- 7. Training Loop (Using EXACT Original Manual Batching Logic) ---
+    # --- 7. Training Loop ---
     epochs = config['training']['epochs']
     batch_size = config['training']['batch_size']
-    # Calculate number of loops based on original script's logic: round(N/B) - 1
-    num_batches_float = n_samples / batch_size
-    num_loops = int(round(num_batches_float)) - 1
-    if num_loops < 0 : num_loops = 0 # Handle dataset smaller than batch size
-    num_processed = num_loops * batch_size
-    num_dropped = n_samples - num_processed
-    print(f"\nUsing original manual batching logic: range(0, round(N/B)-1)")
-    print(f"N={n_samples}, B={batch_size}. N/B={num_batches_float:.2f}. round(N/B)-1 = {num_loops}")
-    print(f"Processing {num_loops} batches ({num_processed} samples) per epoch.")
     print(f"\n--- Starting Training for {epochs} Epochs ---")
-
 
     try:
         x_train = x_train.to(device)

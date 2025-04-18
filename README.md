@@ -30,7 +30,7 @@ The codebase allows for model training, running inference on test data using a p
     ```bash
     conda env create -f environment.yml
     ```
-    *(This might take several minutes)*
+    *(This might take up to 10 minutes)*
 
 3.  **Activate Environment:** Activate the newly created environment (the name is specified inside `environment.yml`, usually defaults to the name in the file, e.g., `submission_env`).
     ```bash
@@ -152,6 +152,26 @@ Ensure your Conda environment is activated (`conda activate <environment_name_fr
     python plot_results.py --config config.yaml --metrics_file results/evaluation_metrics.json --plot_survival --predictions_file results/survival_predictions.csv --output_dir results/plots
     ```
 * This will save PNG plot files in the specified output directory (`--output_dir`).
+
+## System requirements
+
+### Minimum requirements
+- **Operating system**: macOS 10.15+, Ubuntu 18.04+, or Windows 10/11 (with WSL2)  
+- **CPU**: any 64‑bit Intel or Apple‑Silicon processor  
+- **Memory**: ≥ 8 GB RAM  
+- **Python**: ≥ 3.8  
+- **Conda**: ≥ 4.10  
+- **Disk space**: ≥ 2 GB for code, dependencies, and example data  
+- **GPU**: none required (CPU only)  
+
+### Tested environment
+- **Operating system**: macOS 14.0 (Ventura) (Build 23A344)  
+- **Hardware**: Apple M1 Pro (arm64), 16 GB RAM  
+- **Python**: 3.9.21  
+- **Conda**: 23.3.1
+
+### Dependencies
+All Python packages are pinned in `environment.yml`.  
 
 ## License
 

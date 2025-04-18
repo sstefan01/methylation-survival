@@ -47,7 +47,7 @@ Several data files are required to run the different scripts. Data and model wei
 
 2.  **Pre-trained Model:**
     * To run inference (`inference.py`) and subsequent evaluation/plotting without re-training, you need the pre-trained model weights.
-    * **Action:** Download the model state dictionary file (e.g., `mantismb_model_statedict.pt`) from Zenodo and place it in the `models/` directory. Ensure the path in `config.yaml` under `inference.input_model_path` matches this file.
+    * **Action:** Download the model state dictionary file ( `mantismb_model_weights.pt`) from Zenodo and place it in the `models/` directory. Ensure the path in `config.yaml` under `inference.input_model_path` matches this file.
 
 3.  **Cohort Data (Features & Survival):**
     * The code requires separate files for different data types (beta, cnv) and survival/clinical information for multiple patient cohorts (e.g., ICGC, Cavalli, Sturm, Northcott).

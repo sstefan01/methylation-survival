@@ -7,7 +7,7 @@ This repository contains the code for the study "AI-based Precision Prognostics 
 The core of the project is a deep learning model implemented in PyTorch, featuring:
 * A sparse input layer (`sparselinear`) to handle high-dimensional methylation and CNV data guided by a gene connectivity prior.
 * Subsequent dense layers with ELU activations and LayerNorm.
-* Concatenation with metastasis stage
+* Concatenation with metastasis stage.
 * A Multi-Task Logistic Regression (MTLR) head for discrete-time survival prediction.
 
 The codebase allows for model training, running inference on test data using a pre-trained model, evaluating prediction performance (C-index, time-dependent AUC, Brier score), and plotting results.

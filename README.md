@@ -32,38 +32,37 @@ The codebase allows for model training, running inference on test data using a p
     ```
     *(This might take several minutes)*
 
-3.  **Activate Environment:** Activate the newly created environment (the name is specified inside `environment.yml`, usually defaults to the name in the file, e.g., `nature_env_vX` or `decipher`).
+3.  **Activate Environment:** Activate the newly created environment (the name is specified inside `environment.yml`, usually defaults to the name in the file, e.g., `submission_env`).
     ```bash
     conda activate <environment_name_from_yaml>
     ```
 
 ## Data Acquisition and Placement
 
-Several data files are required to run the different scripts.
+Several data files are required to run the different scripts. Data and model weights can be found at Zenodo using the following DOI/link: **[Zenodo DOI/Link Here]**.
 
 1.  **Connectivity Matrix:**
-    * The file `conn_mat_beta.csv` (or the filename specified in `config.yaml` under `data.conn_mat_path`) is required.
+    * The file `conn_mat_beta.csv` is required.
     * **Action:** Place this file inside the `data/` directory.
-    * *[Optional: Add a sentence about where this file comes from or how it was generated if relevant].*
 
 2.  **Pre-trained Model:**
     * To run inference (`inference.py`) and subsequent evaluation/plotting without re-training, you need the pre-trained model weights.
-    * **Action:** Download the model state dictionary file (e.g., `mantismb_model_statedict.pt`) from [Provide Link - e.g., Zenodo, Google Drive, etc.] and place it in the `models/` directory. Ensure the path in `config.yaml` under `inference.input_model_path` matches this file.
+    * **Action:** Download the model state dictionary file (e.g., `mantismb_model_statedict.pt`) from Zenodo and place it in the `models/` directory. Ensure the path in `config.yaml` under `inference.input_model_path` matches this file.
 
 3.  **Cohort Data (Features & Survival):**
     * The code requires separate files for different data types (beta, cnv) and survival/clinical information for multiple patient cohorts (e.g., ICGC, Cavalli, Sturm, Northcott).
     * **Training Data:** The data files for the cohorts used in training (`cavalli`, `northcott`, `sturm` as per default `config.yaml`) need to be obtained.
-        * **Action:** Download the training datasets from Zenodo using the following DOI/link: **[Your Zenodo DOI/Link Here]**.
+        * **Action:** Download the training datasets from Zenodo.
         * Place the downloaded files into the `data/` directory. Ensure the filenames match those specified in the `data` section of `config.yaml` (e.g., `beta_cavalli.csv`, `cnv_cavalli.csv`, `surv_cavalli.csv`, etc.).
     * **Test Data (ICGC):** The default test cohort is ICGC.
-        * **Action:** Obtain the ICGC data files (`beta_icgc.csv`, `cnv_icgc.csv`, `surv_icgc.csv`). [Specify where users can get this - e.g., Also included in the Zenodo download? Requires specific access request?]. Place them in the `data/` directory. Ensure filenames match the config.
+        * **Action:** Obtain the ICGC data files (`beta_icgc.csv`, `cnv_icgc.csv`, `surv_icgc.csv`) and place them in the `data/` directory. These files are also available through Zenodo Ensure filenames match the config.
 
 4.  **Data Directory Structure (Expected):**
     ```
     <project_root>/
     ├── data/
-    │   ├── conn_mat_beta.csv         # Connectivity matrix
-    │   ├── beta_cavalli.csv        # Example training data
+    │   ├── conn_mat_beta.csv       
+    │   ├── beta_cavalli.csv       
     │   ├── cnv_cavalli.csv
     │   ├── surv_cavalli.csv
     │   ├── beta_northcott.csv
@@ -72,10 +71,10 @@ Several data files are required to run the different scripts.
     │   ├── beta_sturm.csv
     │   ├── cnv_sturm.csv
     │   ├── surv_sturm.csv
-    │   ├── beta_icgc.csv           # Example test data
+    │   ├── beta_icgc.csv           
     │   ├── cnv_icgc.csv
     │   ├── surv_icgc.csv
-    │   └── ... (other cohort files if used) ...
+    │   └── ... (other cohort files if using) ...
     ├── models/
     │   └── mantismb_model_statedict.pt # Pre-trained model weights
     ├── results/
@@ -157,7 +156,7 @@ Ensure your Conda environment is activated (`conda activate <environment_name_fr
 
 ## License
 
-This project is licensed under 
+This project is licensed under MIT license.
 
 ## Contact
 

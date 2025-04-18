@@ -22,8 +22,8 @@ The codebase allows for model training, running inference on test data using a p
 
 1.  **Clone the Repository:**
     ```bash
-    git clone <your-repository-url>
-    cd <your-repository-directory>
+    git clone https://github.com/sstefan01/methylation-survival.git
+    cd methylation-survival
     ```
 
 2.  **Create Conda Environment:** Create the environment using the provided file. This installs all necessary dependencies with specific versions.

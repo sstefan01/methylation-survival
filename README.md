@@ -39,7 +39,7 @@ The codebase allows for model training, running inference on test data using a p
 
 ## Data Acquisition and Placement
 
-Several data files are required to run the different scripts. Data and model weights can be found at Zenodo using the following DOI/link: **[Zenodo DOI/Link Here]**.
+Several data files are required to run the different scripts. Data and model weights can be found at Zenodo using the following DOI/link: **[https://zenodo.org/records/15225805]**.
 
 1.  **Connectivity Matrix:**
     * The file `conn_mat_beta.csv` is required.

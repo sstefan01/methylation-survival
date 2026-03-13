@@ -7,8 +7,10 @@ data/
 results/
 requirements.txt
 
-## Saved models (Usually large, provide separately e.g., via Zenodo)
+## Saved models (Usually large, provided separately e.g., via Zenodo)
 models/
+
+full_metadata/
 
 # --- Python Specific ---
 # Byte-compiled / optimized / DLL files

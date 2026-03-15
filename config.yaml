@@ -79,3 +79,10 @@ inference:
   input_model_path: "models/mantismb_model_weights.pt" 
   output_predictions_path: "results/survival_predictions.csv"
   batch_size: 64
+
+
+# python inference.py \
+#   --custom_beta data/beta_sjmb03_20240104.csv \
+#   --custom_cnv data/CNV_gene_sjmb03_20240111.csv \
+#   --custom_surv data/sjmb03_surv.csv \
+#   --output data/sjmb03_predictions.csv

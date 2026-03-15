@@ -199,13 +199,13 @@ class Part2_SurvivalHead(nn.Module):
         """
         x = self.d1(x)
         x = self.m1(x) # Output shape: [batch_size, num_time_bins + 1]
-
+        # REMOVED log_softmax call
         return x
 
 
 # --- Combined Model ---
 class CombinedSurvivalModel(nn.Module):
-
+    # ... (docstring) ...
     def __init__(self,
                  part1_input_dim: int,
                  conn_mat: torch.Tensor,
@@ -215,7 +215,7 @@ class CombinedSurvivalModel(nn.Module):
                  clinical_feature_weight: float,
                  part2_num_time_bins: int,
                  part2_dropout_rate: float):
-
+        # ... (docstring) ...
         super().__init__()
 
         # --- RENAME these attributes back to p1 and p2 ---
@@ -239,10 +239,10 @@ class CombinedSurvivalModel(nn.Module):
             num_time_bins=part2_num_time_bins,
             dropout_rate=part2_dropout_rate
         )
-
+        # --- End Renaming ---
 
     def forward(self, x_main: torch.Tensor, x_clinical: torch.Tensor) -> torch.Tensor:
-
+        # --- UPDATE forward method to use self.p1 and self.p2 ---
         # Process main features through Part 1
         features = self.p1(x_main) # Use self.p1
 

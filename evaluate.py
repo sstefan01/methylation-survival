@@ -1,4 +1,4 @@
-# evaluate.py (Using 2D Time-Varying Risk Score for AUC)
+# evaluate.py 
 
 import argparse
 import yaml
@@ -66,7 +66,20 @@ def main(args):
     # --- 1. Load Configuration ---
     config = load_config(args.config)
     pred_path = args.pred_path # Use required argument
-    test_cohort_from_config = config['run_setup']['test_cohort'] # Read from config only
+    test_cohort_from_config = config["run_setup"]["test_cohort"]
+
+    standard_test_cohorts = {"cav", "northcott", "sturm", "jones"}
+    using_custom_dataset = any([
+        args.custom_surv is not None,
+    ])
+
+    if using_custom_dataset:
+        reported_test_cohort = args.dataset_name if args.dataset_name else "custom test dataset"
+    else:
+        if test_cohort_from_config in standard_test_cohorts:
+            reported_test_cohort = test_cohort_from_config
+        else:
+            reported_test_cohort = test_cohort_from_config
 
     # --- 2. Load Predictions CSV ---
     if not os.path.exists(pred_path): raise FileNotFoundError(f"Prediction CSV not found: {pred_path}")
@@ -79,8 +92,9 @@ def main(args):
 
     # --- 3. Load True Survival Data (Test Set) ---
     try:
-        test_cohort = test_cohort_from_config # Use cohort from config
-        print(f"Evaluating Test Cohort: '{test_cohort}' (from config)")
+        test_cohort = test_cohort_from_config
+        print(f"Evaluating Test Cohort: '{reported_test_cohort}'")
+
         default_time_col = config['data']['time_column']; default_event_col = config['data']['event_column']
         clinical_col = config['data']['clinical_feature_col']; id_col = config['data'].get('id_column', None)
         t_col_test = config['data'].get('os_time_column', default_time_col); e_col_test = config['data'].get('os_event_column', default_event_col)
@@ -278,7 +292,7 @@ def main(args):
             "auc_values_at_evaluated_times": auc_values_all.tolist() if auc_values_all is not None else [],
             "brier_score_times": list(brier_scores_dict.keys()),
             "brier_score_values": [v if not np.isnan(v) else None for v in brier_scores_dict.values()],
-            "config_file": args.config, "prediction_file": pred_path, "test_cohort": test_cohort
+            "config_file": args.config, "prediction_file": pred_path, "test_cohort": reported_test_cohort
         }
         # Save to JSON
         output_dir_metrics = os.path.dirname(args.output_metrics);
@@ -297,7 +311,8 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to YAML config.")
     parser.add_argument("--pred_path", type=str, required=True, help="Path to predictions CSV.")
     parser.add_argument("--output_metrics", type=str, default=None, help="Path to save metrics JSON.")
-    
+    parser.add_argument("--dataset_name", type=str, help="Optional label for a custom test dataset. Used when any custom input path override is provided.")
+
     # New argument for custom survival data path
     parser.add_argument("--custom_surv", type=str, help="Path to custom survival/clinical data CSV. Overrides config path.")
 

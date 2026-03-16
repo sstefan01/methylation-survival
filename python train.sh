@@ -39,3 +39,4 @@ python inference.py   --custom_beta data/beta_uniform_illumina_rCM_g34.csv   --c
 python evaluate.py --config config.yaml --pred_path results/rCM_predictions.csv --custom_surv data/group34_rCM_samples.csv --output_metrics results/evaluation_metrics_rCM.json
 
 python inference.py   --custom_beta data/beta_val_uniform_illumina_rCM_g34.csv   --custom_cnv data/CNV_g34_test.csv  --custom_surv data/group34_rCM_samples.csv   --output results/rCM_predictions.csv
+python evaluate.py --config config.yaml --pred_path results/rCM_predictions.csv --custom_surv data/group34_rCM_samples.csv --output_metrics results/evaluation_metrics_rCM.json

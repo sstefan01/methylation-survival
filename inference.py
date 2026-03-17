@@ -22,6 +22,7 @@ try:
         load_beta_features,
         load_cnv_features,
         load_survival_data,
+        load_survival_data_inference,
         normalize_instance_wise,
         mtlr_survival
     )
@@ -76,6 +77,22 @@ def main(args):
     except KeyError as e:
         print(f"Error: Missing required key {e} in config file.")
         sys.exit(1)
+
+
+    test_cohort_from_config = config["run_setup"]["test_cohort"]
+
+    standard_test_cohorts = {"cav", "northcott", "sturm", "jones"}
+    using_custom_dataset = any([
+        args.custom_surv is not None,
+    ])
+
+    if using_custom_dataset:
+        test_cohort = args.dataset_name if args.dataset_name else "custom test dataset"
+    else:
+        if test_cohort_from_config in standard_test_cohorts:
+            test_cohort = test_cohort_from_config
+        else:
+            test_cohort = test_cohort_from_config
 
     print(f"Running inference for test cohort: '{test_cohort}'")
     print(f"Using feature types: {feature_types}")
@@ -148,12 +165,12 @@ def main(args):
         if not test_surv_path: raise ValueError(f"Survival path not found via --custom_surv or config '{test_cohort}_surv_path'")
         print(f"Loading survival data from: {test_surv_path}")
 
-        t_col_test = config['data'].get('os_time_column', config['data']['time_column'])
-        e_col_test = config['data'].get('os_event_column', config['data']['event_column'])
+        # t_col_test = config['data'].get('os_time_column', config['data']['time_column'])
+        # e_col_test = config['data'].get('os_event_column', config['data']['event_column'])
         clinical_col = config['data']['clinical_feature_col']
 
-        _, _, m_test, patient_ids_test_loaded = load_survival_data(
-            test_surv_path, t_col_test, e_col_test, clinical_col, id_col_name # Pass ID col name
+        m_test, patient_ids_test_loaded = load_survival_data_inference(
+            test_surv_path, clinical_col, id_col_name # Pass ID col name
         )
         if id_col_name and patient_ids_test_loaded is not None:
              patient_ids_test = np.asarray(patient_ids_test_loaded)
@@ -297,6 +314,7 @@ if __name__ == "__main__":
     parser.add_argument("--custom_beta", type=str, help="Path to custom beta features CSV. Overrides config path.")
     parser.add_argument("--custom_cnv", type=str, help="Path to custom CNV features CSV. Overrides config path.")
     parser.add_argument("--custom_surv", type=str, help="Path to custom survival/clinical data CSV. Overrides config path.")
+    parser.add_argument("--dataset_name", type=str, help="Optional label for a custom test dataset. Used when any custom input path override is provided.")
 
     args = parser.parse_args()
     try:

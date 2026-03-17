@@ -92,18 +92,18 @@ def main(args):
 
     # --- 3. Load True Survival Data (Test Set) ---
     try:
-        test_cohort = test_cohort_from_config
+        
         print(f"Evaluating Test Cohort: '{reported_test_cohort}'")
 
         default_time_col = config['data']['time_column']; default_event_col = config['data']['event_column']
         clinical_col = config['data']['clinical_feature_col']; id_col = config['data'].get('id_column', None)
         t_col_test = config['data'].get('os_time_column', default_time_col); e_col_test = config['data'].get('os_event_column', default_event_col)
         
-        surv_path_key = f"{test_cohort}_surv_path"
+        surv_path_key = f"{reported_test_cohort}_surv_path"
         # Prioritize custom arg over config
         test_surv_path = args.custom_surv if args.custom_surv else config['data'][surv_path_key]
         
-        print(f"Loading true survival data for '{test_cohort}' from: {test_surv_path}")
+        print(f"Loading true survival data for '{reported_test_cohort}' from: {test_surv_path}")
         print(f"  Time Col: '{t_col_test}', Event Col: '{e_col_test}'")
         t_test_tensor, e_test_tensor, _, _ = load_survival_data(test_surv_path, t_col_test, e_col_test, clinical_col, id_col)
         t_test_np = t_test_tensor.numpy(); e_test_np = e_test_tensor.numpy()

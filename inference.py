@@ -22,6 +22,7 @@ try:
         load_beta_features,
         load_cnv_features,
         load_survival_data,
+        load_survival_data_inference,
         normalize_instance_wise,
         mtlr_survival
     )
@@ -77,6 +78,22 @@ def main(args):
         print(f"Error: Missing required key {e} in config file.")
         sys.exit(1)
 
+
+    test_cohort_from_config = config["run_setup"]["test_cohort"]
+
+    standard_test_cohorts = {"cav", "northcott", "sturm", "jones"}
+    using_custom_dataset = any([
+        args.custom_surv is not None,
+    ])
+
+    if using_custom_dataset:
+        test_cohort = args.dataset_name if args.dataset_name else "custom test dataset"
+    else:
+        if test_cohort_from_config in standard_test_cohorts:
+            test_cohort = test_cohort_from_config
+        else:
+            test_cohort = test_cohort_from_config
+
     print(f"Running inference for test cohort: '{test_cohort}'")
     print(f"Using feature types: {feature_types}")
     if id_col_name: print(f"Expecting patient ID column: '{id_col_name}'")
@@ -101,13 +118,16 @@ def main(args):
 
     try:
         if "beta" in feature_types:
-            beta_path_key = f"{test_cohort}_beta_path"
-            if beta_path_key not in config['data']: raise ValueError(f"Path key '{beta_path_key}' not found")
-            x_test_beta = load_beta_features(config['data'][beta_path_key])
+            beta_path = args.custom_beta if args.custom_beta else config['data'].get(f"{test_cohort}_beta_path")
+            if not beta_path: raise ValueError(f"Beta path not found via --custom_beta or config '{test_cohort}_beta_path'")
+            print(f"Loading beta features from: {beta_path}")
+            x_test_beta = load_beta_features(beta_path)
+            
         if "cnv" in feature_types:
-            cnv_path_key = f"{test_cohort}_cnv_path"
-            if cnv_path_key not in config['data']: raise ValueError(f"Path key '{cnv_path_key}' not found")
-            x_test_cnv = load_cnv_features(config['data'][cnv_path_key])
+            cnv_path = args.custom_cnv if args.custom_cnv else config['data'].get(f"{test_cohort}_cnv_path")
+            if not cnv_path: raise ValueError(f"CNV path not found via --custom_cnv or config '{test_cohort}_cnv_path'")
+            print(f"Loading CNV features from: {cnv_path}")
+            x_test_cnv = load_cnv_features(cnv_path)
 
     except (ValueError, FileNotFoundError, Exception) as e:
         print(f"Error loading test features: {e}")
@@ -141,16 +161,16 @@ def main(args):
     print(f"Loading clinical data and IDs for test cohort '{test_cohort}'...")
     patient_ids_test = None # Initialize
     try:
-        surv_path_key = f"{test_cohort}_surv_path"
-        if surv_path_key not in config['data']: raise ValueError(f"Path key '{surv_path_key}' not found")
-        test_surv_path = config['data'][surv_path_key]
+        test_surv_path = args.custom_surv if args.custom_surv else config['data'].get(f"{test_cohort}_surv_path")
+        if not test_surv_path: raise ValueError(f"Survival path not found via --custom_surv or config '{test_cohort}_surv_path'")
+        print(f"Loading survival data from: {test_surv_path}")
 
-        t_col_test = config['data'].get('os_time_column', config['data']['time_column'])
-        e_col_test = config['data'].get('os_event_column', config['data']['event_column'])
+        # t_col_test = config['data'].get('os_time_column', config['data']['time_column'])
+        # e_col_test = config['data'].get('os_event_column', config['data']['event_column'])
         clinical_col = config['data']['clinical_feature_col']
 
-        _, _, m_test, patient_ids_test_loaded = load_survival_data(
-            test_surv_path, t_col_test, e_col_test, clinical_col, id_col_name # Pass ID col name
+        m_test, patient_ids_test_loaded = load_survival_data_inference(
+            test_surv_path, clinical_col, id_col_name # Pass ID col name
         )
         if id_col_name and patient_ids_test_loaded is not None:
              patient_ids_test = np.asarray(patient_ids_test_loaded)
@@ -278,9 +298,7 @@ def main(args):
         except Exception as e_npy:
              print(f"Fallback NPY save also failed: {e_npy}")
 
-
     print("Inference script completed.")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -291,6 +309,12 @@ if __name__ == "__main__":
     parser.add_argument("--model_path", type=str, help="Override path to pre-trained model state_dict (.pt) file.")
     parser.add_argument("--output", type=str, help="Override path to save output predictions (.csv).")
     parser.add_argument("--test_cohort", type=str, help="Override the test cohort specified in the config's run_setup section.")
+    
+    # New arguments for custom dataset paths
+    parser.add_argument("--custom_beta", type=str, help="Path to custom beta features CSV. Overrides config path.")
+    parser.add_argument("--custom_cnv", type=str, help="Path to custom CNV features CSV. Overrides config path.")
+    parser.add_argument("--custom_surv", type=str, help="Path to custom survival/clinical data CSV. Overrides config path.")
+    parser.add_argument("--dataset_name", type=str, help="Optional label for a custom test dataset. Used when any custom input path override is provided.")
 
     args = parser.parse_args()
     try:

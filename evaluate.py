@@ -1,4 +1,4 @@
-# evaluate.py (Using 2D Time-Varying Risk Score for AUC)
+# evaluate.py 
 
 import argparse
 import yaml
@@ -44,6 +44,7 @@ def compute_metric_at_times(metric, time_true, prob_pred, event_observed, score_
         except ValueError as e: score = np.nan; print(f"Warn: Brier@T={time:.2f}: {e}")
         scores[time] = score
     return scores
+
 def brier_score_at_times(time_true, prob_pred, event_observed, score_times):
     return compute_metric_at_times(brier_score_loss, time_true, prob_pred, event_observed, score_times)
 
@@ -65,7 +66,20 @@ def main(args):
     # --- 1. Load Configuration ---
     config = load_config(args.config)
     pred_path = args.pred_path # Use required argument
-    test_cohort_from_config = config['run_setup']['test_cohort'] # Read from config only
+    test_cohort_from_config = config["run_setup"]["test_cohort"]
+
+    standard_test_cohorts = {"cav", "northcott", "sturm", "jones"}
+    using_custom_dataset = any([
+        args.custom_surv is not None,
+    ])
+
+    if using_custom_dataset:
+        reported_test_cohort = args.dataset_name if args.dataset_name else "custom test dataset"
+    else:
+        if test_cohort_from_config in standard_test_cohorts:
+            reported_test_cohort = test_cohort_from_config
+        else:
+            reported_test_cohort = test_cohort_from_config
 
     # --- 2. Load Predictions CSV ---
     if not os.path.exists(pred_path): raise FileNotFoundError(f"Prediction CSV not found: {pred_path}")
@@ -78,13 +92,18 @@ def main(args):
 
     # --- 3. Load True Survival Data (Test Set) ---
     try:
-        test_cohort = test_cohort_from_config # Use cohort from config
-        print(f"Evaluating Test Cohort: '{test_cohort}' (from config)")
+        
+        print(f"Evaluating Test Cohort: '{reported_test_cohort}'")
+
         default_time_col = config['data']['time_column']; default_event_col = config['data']['event_column']
         clinical_col = config['data']['clinical_feature_col']; id_col = config['data'].get('id_column', None)
         t_col_test = config['data'].get('os_time_column', default_time_col); e_col_test = config['data'].get('os_event_column', default_event_col)
-        surv_path_key = f"{test_cohort}_surv_path"; test_surv_path = config['data'][surv_path_key]
-        print(f"Loading true survival data for '{test_cohort}' from: {test_surv_path}")
+        
+        surv_path_key = f"{reported_test_cohort}_surv_path"
+        # Prioritize custom arg over config
+        test_surv_path = args.custom_surv if args.custom_surv else config['data'][surv_path_key]
+        
+        print(f"Loading true survival data for '{reported_test_cohort}' from: {test_surv_path}")
         print(f"  Time Col: '{t_col_test}', Event Col: '{e_col_test}'")
         t_test_tensor, e_test_tensor, _, _ = load_survival_data(test_surv_path, t_col_test, e_col_test, clinical_col, id_col)
         t_test_np = t_test_tensor.numpy(); e_test_np = e_test_tensor.numpy()
@@ -273,13 +292,12 @@ def main(args):
             "auc_values_at_evaluated_times": auc_values_all.tolist() if auc_values_all is not None else [],
             "brier_score_times": list(brier_scores_dict.keys()),
             "brier_score_values": [v if not np.isnan(v) else None for v in brier_scores_dict.values()],
-            "config_file": args.config, "prediction_file": pred_path, "test_cohort": test_cohort
+            "config_file": args.config, "prediction_file": pred_path, "test_cohort": reported_test_cohort
         }
         # Save to JSON
         output_dir_metrics = os.path.dirname(args.output_metrics);
         if output_dir_metrics and not os.path.exists(output_dir_metrics): os.makedirs(output_dir_metrics)
         try:
-             import json
              with open(args.output_metrics, 'w') as f:
                   json.dump(results, f, indent=4, default=lambda x: float(x) if isinstance(x, (np.float_, np.float32, np.float64)) else (None if np.isnan(x) else x) if isinstance(x, float) else x.tolist() if isinstance(x, np.ndarray) else x.__str__())
              print(f"Evaluation metrics saved to: {args.output_metrics}")
@@ -289,12 +307,14 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # ... (argparse setup remains the same: requires --pred_path, optional --config, --output_metrics) ...
     parser = argparse.ArgumentParser(description="Evaluate survival model predictions.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to YAML config.")
     parser.add_argument("--pred_path", type=str, required=True, help="Path to predictions CSV.")
     parser.add_argument("--output_metrics", type=str, default=None, help="Path to save metrics JSON.")
-    # Removed --test_cohort override
+    parser.add_argument("--dataset_name", type=str, help="Optional label for a custom test dataset. Used when any custom input path override is provided.")
+
+    # New argument for custom survival data path
+    parser.add_argument("--custom_surv", type=str, help="Path to custom survival/clinical data CSV. Overrides config path.")
 
     args = parser.parse_args()
     try:

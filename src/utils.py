@@ -182,35 +182,46 @@ def mtlr_survival(logits: torch.Tensor) -> torch.Tensor:
 
 
 def load_beta_features(path: str) -> torch.Tensor:
-    """Loads beta features from CSV using Dask, returns transposed tensor."""
-    if not os.path.exists(path): raise FileNotFoundError(f"Beta features file not found: {path}")
+    """Loads beta features from CSV using pandas, returns transposed tensor."""
+    if not os.path.exists(path): 
+        raise FileNotFoundError(f"Beta features file not found: {path}")
+    
     print(f"Loading beta features from: {path}")
     try:
-        ddf = dd.read_csv(path, header=None, delimiter=',', dtype=np.float32, assume_missing=True)
-        with warnings.catch_warnings(): # Suppress potential Dask warnings
-            warnings.simplefilter("ignore")
-            features_np = ddf.compute().values
+        # index_col=0 handles the row names, pandas handles headers automatically
+        df = pd.read_csv(path, index_col=0)
+        
+        # Convert pandas dataframe to numpy, then to PyTorch tensor
+        features_np = df.to_numpy()
         features_torch = torch.from_numpy(features_np).float()
+        
+        # Transpose the tensor
         features_torch = torch.transpose(features_torch, 0, 1)
+        
         print(f"Loaded beta features shape: {features_torch.shape}")
         return features_torch
+    
     except Exception as e:
         print(f"Error loading beta features from {path}: {e}")
         raise
 
 def load_cnv_features(path: str) -> torch.Tensor:
-    """Loads CNV features from CSV using Dask, returns transposed tensor."""
-    if not os.path.exists(path): raise FileNotFoundError(f"CNV features file not found: {path}")
+    """Loads CNV features from CSV using pandas, returns transposed tensor."""
+    if not os.path.exists(path): 
+        raise FileNotFoundError(f"CNV features file not found: {path}")
+    
     print(f"Loading CNV features from: {path}")
     try:
-        ddf = dd.read_csv(path, header=None, delimiter=',', dtype=np.float32, assume_missing=True)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            features_np = ddf.compute().values
+        # index_col=0 handles the row names, pandas handles headers automatically
+        df = pd.read_csv(path, index_col=0)
+        
+        features_np = df.to_numpy()
         features_torch = torch.from_numpy(features_np).float()
         features_torch = torch.transpose(features_torch, 0, 1)
+        
         print(f"Loaded CNV features shape: {features_torch.shape}")
         return features_torch
+    
     except Exception as e:
         print(f"Error loading CNV features from {path}: {e}")
         raise
@@ -235,6 +246,31 @@ def load_survival_data(path: str, time_col: str, event_col: str, clinical_col: s
         print(f"Loaded survival/clinical data for {len(t)} samples." + (
             f" Found IDs for {len(ids)}." if ids is not None else " No IDs requested/found."))
         return t, e, m, ids  # Return IDs
+    except KeyError as err:
+        print(f"Error: Column '{err}' not found in {path}")
+        raise
+    except Exception as err:
+        print(f"Error reading survival/clinical CSV {path}: {err}")
+        raise
+
+def load_survival_data_inference(path: str, clinical_col: str, id_col: Optional[str] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[np.ndarray]]:
+    """Loads survival time, event, and metastasis from CSV using Pandas."""
+    if not os.path.exists(path): raise FileNotFoundError(f"Survival/Clinical file not found: {path}")
+    print(f"Loading survival/clinical data from: {path}")
+    try:
+        df = pd.read_csv(path)
+        # Convert columns to tensors with appropriate types
+        m = torch.tensor(df[clinical_col].values, dtype=torch.float32) # Load as float
+        ids = None
+        if id_col:
+            try:
+                ids = df[id_col].values  # Load IDs as numpy array
+            except KeyError:
+                print(f"Warning: ID column '{id_col}' not found in {path}. Returning None for IDs.")
+
+        print(f"Loaded survival/clinical data for {len(m)} samples." + (
+            f" Found IDs for {len(ids)}." if ids is not None else " No IDs requested/found."))
+        return m, ids  # Return IDs
     except KeyError as err:
         print(f"Error: Column '{err}' not found in {path}")
         raise

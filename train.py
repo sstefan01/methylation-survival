@@ -204,18 +204,17 @@ def main(args):
     model.train()
     for epoch in range(epochs):
         loss = 0
-        for batch_start in range(0, n_samples, batch_size):
-            batch_slice = slice(batch_start, min(batch_start + batch_size, n_samples))
-            batch_features = x_train[batch_slice,]
-            met_features = m_train[batch_slice,]
+        for bit in range(0, round(n_samples / batch_size) - 1):
+            batch_features = x_train[bit*batch_size:(1+bit)*batch_size,]
+            met_features = m_train[bit*batch_size:(1+bit)*batch_size,]
             optimizer.zero_grad()
             out = model(batch_features.float(), met_features.float())
             if survival_head_type == 'mtlr':
-                lab_features = y_train[batch_slice,]
+                lab_features = y_train[bit*batch_size:(1+bit)*batch_size,]
                 l = mtlr_neg_log_likelihood(out, lab_features, average=True)
             else:
-                batch_times = all_train_t[batch_slice]
-                batch_events = all_train_e[batch_slice]
+                batch_times = all_train_t[bit*batch_size:(1+bit)*batch_size,]
+                batch_events = all_train_e[bit*batch_size:(1+bit)*batch_size,]
                 l = deepsurv_neg_log_likelihood(out, batch_times, batch_events, average=True)
             l.backward()
             optimizer.step()
@@ -233,6 +232,8 @@ def main(args):
     print(f"Saving trained model state_dict to: {save_path}")
     try: torch.save(model.state_dict(), save_path); print("Model state_dict saved successfully.")
     except Exception as e: print(f"Error saving model state_dict: {e}")
+
+
 
 
 if __name__ == "__main__":

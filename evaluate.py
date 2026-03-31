@@ -124,7 +124,7 @@ def main(args):
             e_test_c = e_test_np[valid_mask].astype(bool)
             risk_scores_c = risk_scores[valid_mask]
             try:
-                c_index = concordance_index(t_test_c, risk_scores_c, e_test_c)
+                c_index = concordance_index(t_test_c, -risk_scores_c, e_test_c)
             except Exception as e:
                 print(f"Error C-index (single-column mode): {e}")
         else:

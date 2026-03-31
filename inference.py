@@ -74,6 +74,7 @@ def main(args):
         recoding_rule = config['run_setup']['metastasis_recoding']
         model_input_dim = config['model']['part1']['input_dim']
         id_col_name = config['data'].get('id_column', None)
+        survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
     except KeyError as e:
         print(f"Error: Missing required key {e} in config file.")
         sys.exit(1)
@@ -208,7 +209,8 @@ def main(args):
             num_clinical_features=config['model']['combined']['num_clinical_features'],
             clinical_feature_weight=config['model']['combined']['clinical_feature_weight'],
             part2_num_time_bins=config['model']['part2']['num_time_bins'],
-            part2_dropout_rate=config['model']['part2']['dropout_rate']
+            part2_dropout_rate=config['model']['part2']['dropout_rate'],
+            survival_head_type=survival_head_type
         ).to(device)
     except Exception as e:
         print(f"Error instantiating model: {e}")
@@ -247,9 +249,12 @@ def main(args):
     print("Starting inference loop...")
     with torch.no_grad():
         for i, (batch_x_main, batch_x_clinical) in enumerate(test_loader):
-            logits = model(batch_x_main, batch_x_clinical)
-            survival_probs = mtlr_survival(logits)
-            all_predictions.append(survival_probs.cpu().numpy())
+            outputs = model(batch_x_main, batch_x_clinical)
+            if survival_head_type == 'mtlr':
+                batch_predictions = mtlr_survival(outputs).cpu().numpy()
+            else:
+                batch_predictions = outputs.cpu().numpy()
+            all_predictions.append(batch_predictions)
             if (i + 1) % 50 == 0 or i == len(test_loader) - 1:
                  print(f"  Processed batch {i+1}/{len(test_loader)}")
     print("Inference loop finished.")
@@ -260,13 +265,19 @@ def main(args):
 
     # Generate Time Point Headers
     try:
-        time_bins = np.array(config['data']['time_bins'])
-        pred_times = np.concatenate(([0.0], time_bins))
-        if len(pred_times) != final_predictions.shape[1]: raise ValueError("Mismatch time_bins / prediction columns.")
-        time_headers = [f"S_t_{t:.4f}" for t in pred_times]
+        if survival_head_type == 'mtlr':
+            time_bins = np.array(config['data']['time_bins'])
+            pred_times = np.concatenate(([0.0], time_bins))
+            if len(pred_times) != final_predictions.shape[1]:
+                raise ValueError("Mismatch time_bins / prediction columns.")
+            time_headers = [f"S_t_{t:.4f}" for t in pred_times]
+        else:
+            if final_predictions.ndim == 1:
+                final_predictions = final_predictions.reshape(-1, 1)
+            time_headers = ['risk_score']
     except (KeyError, ValueError) as e:
          print(f"Warning: Error generating time headers ({e}). Using generic headers.")
-         time_headers = [f"Prob_Time_{i}" for i in range(final_predictions.shape[1])]
+         time_headers = [f"Prediction_{i}" for i in range(final_predictions.shape[1])]
 
     # Create Pandas DataFrame
     pred_df = pd.DataFrame(final_predictions, columns=time_headers)

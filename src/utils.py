@@ -180,6 +180,31 @@ def mtlr_survival(logits: torch.Tensor) -> torch.Tensor:
     survival_probs = torch.clamp(survival_probs, min=0.0, max=1.0)
     return survival_probs
 
+def deepsurv_neg_log_likelihood(risk_scores: torch.Tensor, time: torch.Tensor, event: torch.Tensor, average: bool = False) -> torch.Tensor:
+    """Computes the Cox partial negative log-likelihood used by DeepSurv."""
+    if risk_scores.ndim > 1:
+        risk_scores = risk_scores.reshape(-1)
+    time = time.reshape(-1).to(device=risk_scores.device, dtype=torch.float32)
+    event = event.reshape(-1).to(device=risk_scores.device)
+    event = event.float()
+
+    if risk_scores.numel() == 0:
+        return torch.tensor(0.0, device=risk_scores.device, dtype=risk_scores.dtype)
+
+    order = torch.argsort(time, descending=True)
+    sorted_risk = risk_scores[order]
+    sorted_event = event[order]
+
+    log_cumulative_risk = torch.logcumsumexp(sorted_risk, dim=0)
+    observed_losses = (sorted_risk - log_cumulative_risk) * sorted_event
+    neg_log_likelihood = -observed_losses.sum()
+
+    if average:
+        num_events = sorted_event.sum()
+        if num_events > 0:
+            neg_log_likelihood = neg_log_likelihood / num_events
+    return neg_log_likelihood
+
 
 def load_beta_features(path: str) -> torch.Tensor:
     """Loads beta features from CSV using pandas, returns transposed tensor."""

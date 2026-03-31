@@ -25,7 +25,8 @@ try:
         load_survival_data, # Assumes returns t, e, m, ids (torch tensors/np array)
         normalize_instance_wise, # Instance-wise normalizer
         encode_survival, # Target encoder
-        mtlr_neg_log_likelihood # Loss function
+        mtlr_neg_log_likelihood, # Loss function
+        deepsurv_neg_log_likelihood
     )
 except ImportError as e:
     print(f"Error importing project modules: {e}")
@@ -87,6 +88,7 @@ def main(args):
         clinical_col = config['data']['clinical_feature_col']; id_col = config['data'].get('id_column', None)
         time_bins = torch.tensor(config['data']['time_bins'], dtype=torch.float32).to(device) # Load bins to device
         recoding_rule = config['run_setup']['metastasis_recoding']; model_input_dim = config['model']['part1']['input_dim']
+        survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
 
         # ... (load features cohort by cohort into feature_data dict) ...
         feature_data = {ftype: [] for ftype in feature_types}; survival_data = {'t': [], 'e': [], 'm': []}
@@ -122,9 +124,13 @@ def main(args):
         # ... (prepare m_train, y_train) ...
         m_train = all_train_m.reshape(-1, 1)
         val_from = recoding_rule['from']; val_to = recoding_rule['to']; m_train[m_train == val_from] = val_to
-        y_train = encode_survival(all_train_t, all_train_e, time_bins)
-        print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, Y={y_train.shape}")
-        n_samples = y_train.size(dim=0)
+        y_train = encode_survival(all_train_t, all_train_e, time_bins) if survival_head_type == 'mtlr' else None
+        if survival_head_type == 'mtlr':
+            print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, Y={y_train.shape}")
+            n_samples = y_train.size(dim=0)
+        else:
+            print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, T={all_train_t.shape}, E={all_train_e.shape}")
+            n_samples = all_train_t.size(dim=0)
 
     except Exception as e: print(f"Error during data loading/preprocessing: {e}"); sys.exit(1)
 
@@ -166,7 +172,8 @@ def main(args):
             num_clinical_features=config['model']['combined']['num_clinical_features'],
             clinical_feature_weight=config['model']['combined']['clinical_feature_weight'],
             part2_num_time_bins=config['model']['part2']['num_time_bins'],
-            part2_dropout_rate=config['model']['part2']['dropout_rate']
+            part2_dropout_rate=config['model']['part2']['dropout_rate'],
+            survival_head_type=survival_head_type
         ).to(device)
     except Exception as e: print(f"Error instantiating model: {e}"); sys.exit(1)
 
@@ -188,19 +195,28 @@ def main(args):
     try:
         x_train = x_train.to(device)
         m_train = m_train.to(device)
-        y_train = y_train.to(device)
+        if y_train is not None:
+            y_train = y_train.to(device)
+        all_train_t = all_train_t.to(device)
+        all_train_e = all_train_e.to(device)
         print("Moved training data tensors to device.")
     except Exception as e: print(f"Error moving data to device {device}: {e}. Check memory."); sys.exit(1)
     model.train()
     for epoch in range(epochs):
         loss = 0
-        for bit in range(0,round(y_train.size(dim=0)/batch_size)-1):
-            batch_features = x_train[bit*batch_size:(1+bit)*batch_size,]
-            met_features = m_train[bit*batch_size:(1+bit)*batch_size,]
-            lab_features = y_train[bit*batch_size:(1+bit)*batch_size,]
+        for batch_start in range(0, n_samples, batch_size):
+            batch_slice = slice(batch_start, min(batch_start + batch_size, n_samples))
+            batch_features = x_train[batch_slice,]
+            met_features = m_train[batch_slice,]
             optimizer.zero_grad()
             out = model(batch_features.float(), met_features.float())
-            l = mtlr_neg_log_likelihood(out, lab_features, average=True)
+            if survival_head_type == 'mtlr':
+                lab_features = y_train[batch_slice,]
+                l = mtlr_neg_log_likelihood(out, lab_features, average=True)
+            else:
+                batch_times = all_train_t[batch_slice]
+                batch_events = all_train_e[batch_slice]
+                l = deepsurv_neg_log_likelihood(out, batch_times, batch_events, average=True)
             l.backward()
             optimizer.step()
             loss += l.item()

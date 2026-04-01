@@ -24,7 +24,8 @@ try:
         load_survival_data,
         load_survival_data_inference,
         normalize_instance_wise,
-        mtlr_survival
+        mtlr_survival,
+        deephit_survival
     )
 except ImportError as e:
     print(f"Error importing project modules: {e}")
@@ -252,6 +253,8 @@ def main(args):
             outputs = model(batch_x_main, batch_x_clinical)
             if survival_head_type == 'mtlr':
                 batch_predictions = mtlr_survival(outputs).cpu().numpy()
+            elif survival_head_type == 'deephit':
+                batch_predictions = deephit_survival(outputs).cpu().numpy()
             else:
                 batch_predictions = outputs.cpu().numpy()
             all_predictions.append(batch_predictions)
@@ -265,7 +268,7 @@ def main(args):
 
     # Generate Time Point Headers
     try:
-        if survival_head_type == 'mtlr':
+        if survival_head_type in {'mtlr', 'deephit'}:
             time_bins = np.array(config['data']['time_bins'])
             pred_times = np.concatenate(([0.0], time_bins))
             if len(pred_times) != final_predictions.shape[1]:

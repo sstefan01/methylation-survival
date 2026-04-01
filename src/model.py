@@ -85,10 +85,22 @@ class Part2_DeepSurvHead(nn.Module):
         return self.out(self.d1(x))
 
 
+class Part2_DeepHitHead(nn.Module):
+    """DeepHit-style head that outputs discrete-time logits."""
+
+    def __init__(self, input_dim: int, num_time_bins: int, dropout_rate: float):
+        super().__init__()
+        self.d1 = nn.Dropout(dropout_rate)
+        self.out = nn.Linear(input_dim, num_time_bins + 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.out(self.d1(x))
+
+
 class CombinedSurvivalModel(nn.Module):
     """Combined sparse feature extractor plus configurable survival head."""
 
-    SUPPORTED_HEAD_TYPES = {"mtlr", "deepsurv"}
+    SUPPORTED_HEAD_TYPES = {"mtlr", "deepsurv", "deephit"}
 
     def __init__(
         self,
@@ -120,6 +132,12 @@ class CombinedSurvivalModel(nn.Module):
 
         if self.survival_head_type == "mtlr":
             self.p2 = Part2_MTLRHead(
+                input_dim=part2_input_dim,
+                num_time_bins=part2_num_time_bins,
+                dropout_rate=part2_dropout_rate,
+            )
+        elif self.survival_head_type == "deephit":
+            self.p2 = Part2_DeepHitHead(
                 input_dim=part2_input_dim,
                 num_time_bins=part2_num_time_bins,
                 dropout_rate=part2_dropout_rate,
@@ -159,7 +177,11 @@ if __name__ == "__main__":
     dummy_x_main = torch.randn(batch_size, p1_input_dim)
     dummy_x_clinical = torch.randn(batch_size, num_clinical_feats)
 
-    for head_type, expected_shape in (("mtlr", (batch_size, p2_time_bins + 1)), ("deepsurv", (batch_size, 1))):
+    for head_type, expected_shape in (
+        ("mtlr", (batch_size, p2_time_bins + 1)),
+        ("deephit", (batch_size, p2_time_bins + 1)),
+        ("deepsurv", (batch_size, 1)),
+    ):
         print(f"Instantiating CombinedSurvivalModel with head='{head_type}'...")
         model = CombinedSurvivalModel(
             part1_input_dim=p1_input_dim,

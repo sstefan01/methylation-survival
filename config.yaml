@@ -47,7 +47,7 @@ run_setup:
 
 # --- Model Architecture and Hyperparameters ---
 model:
-  survival_head_type: "deepsurv" #"mtlr" #or "deepsurv"
+  survival_head_type: "deepsurv" # options: "mtlr", "deepsurv", "deephit"
   part1:
     input_dim: 373759
     layer_dims: [16067, 1602, 421, 64]

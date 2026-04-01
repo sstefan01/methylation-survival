@@ -26,7 +26,8 @@ try:
         normalize_instance_wise, # Instance-wise normalizer
         encode_survival, # Target encoder
         mtlr_neg_log_likelihood, # Loss function
-        deepsurv_neg_log_likelihood
+        deepsurv_neg_log_likelihood,
+        deephit_neg_log_likelihood
     )
 except ImportError as e:
     print(f"Error importing project modules: {e}")
@@ -124,8 +125,8 @@ def main(args):
         # ... (prepare m_train, y_train) ...
         m_train = all_train_m.reshape(-1, 1)
         val_from = recoding_rule['from']; val_to = recoding_rule['to']; m_train[m_train == val_from] = val_to
-        y_train = encode_survival(all_train_t, all_train_e, time_bins) if survival_head_type == 'mtlr' else None
-        if survival_head_type == 'mtlr':
+        y_train = encode_survival(all_train_t, all_train_e, time_bins) if survival_head_type in {'mtlr', 'deephit'} else None
+        if survival_head_type in {'mtlr', 'deephit'}:
             print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, Y={y_train.shape}")
             n_samples = y_train.size(dim=0)
         else:
@@ -212,6 +213,9 @@ def main(args):
             if survival_head_type == 'mtlr':
                 lab_features = y_train[bit*batch_size:(1+bit)*batch_size,]
                 l = mtlr_neg_log_likelihood(out, lab_features, average=True)
+            elif survival_head_type == 'deephit':
+                lab_features = y_train[bit*batch_size:(1+bit)*batch_size,]
+                l = deephit_neg_log_likelihood(out, lab_features, average=True)
             else:
                 batch_times = all_train_t[bit*batch_size:(1+bit)*batch_size,]
                 batch_events = all_train_e[bit*batch_size:(1+bit)*batch_size,]

@@ -206,6 +206,34 @@ def deepsurv_neg_log_likelihood(risk_scores: torch.Tensor, time: torch.Tensor, e
     return neg_log_likelihood
 
 
+def deephit_neg_log_likelihood(logits: torch.Tensor, target: torch.Tensor, average: bool = False) -> torch.Tensor:
+    """Negative log-likelihood for single-event DeepHit in discrete time."""
+    if logits.ndim != 2:
+        raise ValueError(f"Expected 2D logits tensor, got shape {logits.shape}")
+    target = target.float().to(device=logits.device)
+    if target.shape != logits.shape:
+        raise ValueError(f"Target shape {target.shape} must match logits shape {logits.shape}")
+
+    log_probs = torch.log_softmax(logits, dim=1)
+    likelihood_terms = masked_logsumexp(log_probs, target, dim=1)
+    neg_log_likelihood = -likelihood_terms.sum()
+
+    if average:
+        batch_size = target.size(0)
+        if batch_size > 0:
+            neg_log_likelihood = neg_log_likelihood / batch_size
+        else:
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
+    return neg_log_likelihood
+
+
+def deephit_survival(logits: torch.Tensor) -> torch.Tensor:
+    """Converts DeepHit logits to survival probabilities P(T > t)."""
+    pmf = torch.softmax(logits, dim=1)
+    survival_probs = torch.flip(torch.cumsum(torch.flip(pmf, dims=(1,)), dim=1), dims=(1,))
+    return torch.clamp(survival_probs, min=0.0, max=1.0)
+
+
 def load_beta_features(path: str) -> torch.Tensor:
     """Loads beta features from CSV using pandas, returns transposed tensor."""
     if not os.path.exists(path): 

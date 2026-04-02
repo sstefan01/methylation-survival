@@ -29,7 +29,8 @@ try:
         mtlr_neg_log_likelihood, # Loss function
         deephit_loss,
         deephit_likelihood_loss,
-        encode_survival_deephit
+        encode_survival_deephit,
+        deepsurv_neg_log_likelihood
     )
 except ImportError as e:
     print(f"Error importing project modules: {e}")
@@ -223,7 +224,7 @@ def main(args):
             else:
                 batch_times = all_train_t[bit*batch_size:(1+bit)*batch_size,]
                 batch_events = all_train_e[bit*batch_size:(1+bit)*batch_size,]
-                l = deephit_likelihood_loss(out, batch_times, batch_events, average=True)
+                l = deepsurv_neg_log_likelihood(out, batch_times, batch_events, average=True)
             l.backward()
             optimizer.step()
             loss += l.item()

@@ -8,6 +8,7 @@ from typing import Tuple, Optional, Union, List
 import os
 import warnings
 import shutil
+import torch.nn.functional as F
 
 
 
@@ -131,6 +132,148 @@ def encode_survival(time: Union[torch.Tensor, np.ndarray],
         else: y[i, bin_idx:] = 1
     return y.squeeze(0) if y.shape[0] == 1 else y
 
+def encode_survival_deephit(
+    time: Union[torch.Tensor, np.ndarray, float, int],
+    event: Union[torch.Tensor, np.ndarray, int, bool],
+    bins: Union[torch.Tensor, np.ndarray]
+) -> torch.Tensor:
+    """
+    Encode survival targets for single-risk DeepHit.
+
+    Returns a tensor of shape [B, 2]:
+        target[:, 0] -> bin index (long)
+        target[:, 1] -> event indicator (0=censored, 1=event)
+
+    Notes
+    -----
+    - If bins has length M, valid bin indices are in {0, ..., M}.
+    - This matches an output layer with M + 1 logits.
+    - The exact censoring convention (>= bin_idx vs > bin_idx) is handled in the loss,
+      not here.
+    """
+
+    # Convert to tensors
+    if isinstance(time, np.ndarray):
+        time = torch.from_numpy(np.atleast_1d(time))
+    elif isinstance(time, (float, int, np.number)):
+        time = torch.tensor([time], dtype=torch.float32)
+
+    if isinstance(event, np.ndarray):
+        event = torch.from_numpy(np.atleast_1d(event))
+    elif isinstance(event, (int, bool, np.bool_, np.number)):
+        event = torch.tensor([event], dtype=torch.int64)
+
+    if isinstance(bins, np.ndarray):
+        bins = torch.from_numpy(bins)
+
+    device = bins.device if hasattr(bins, "device") else torch.device("cpu")
+
+    time = time.to(device=device, dtype=torch.float32, non_blocking=True).view(-1)
+    event = event.to(device=device, dtype=torch.int64, non_blocking=True).view(-1)
+    bins = bins.to(device=device, dtype=torch.float32, non_blocking=True).view(-1)
+
+    # Keep times inside supported range
+    if bins.numel() > 0:
+        time = torch.clamp(time, min=0.0, max=bins.max())
+
+    # Bin assignment:
+    # with len(bins)=M, bucketize returns indices in {0,...,M}
+    bin_idx = torch.bucketize(time, bins, right=True).to(torch.int64)
+
+    # Pack as [bin_idx, event]
+    target = torch.stack([bin_idx, event], dim=1)
+
+    return target.squeeze(0) if target.shape[0] == 1 else target
+
+def deephit_survival(logits: torch.Tensor) -> torch.Tensor:
+    """
+    Convert single-risk DeepHit logits to survival probabilities.
+    Returns shape [B, K].
+    """
+    p = torch.softmax(logits, dim=1)            # event-time mass
+    cdf = torch.cumsum(p, dim=1)                # P(T <= t)
+    surv = 1.0 - cdf + p                        # P(T >= t_bin)
+    surv = torch.clamp(surv, 0.0, 1.0)
+    return surv
+
+def deephit_loss(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    beta: float = 1.0,
+    sigma: float = 0.1,
+    average: bool = False,
+) -> torch.Tensor:
+    """
+    Single-risk DeepHit loss, closer to the original repo:
+      total = L1 + beta * L2
+
+    target[:, 0] = bin index
+    target[:, 1] = event indicator (1=event, 0=censored)
+    """
+    device = logits.device
+    dtype = logits.dtype
+
+    t = target[:, 0].long()
+    e = target[:, 1].long()
+
+    B, K = logits.shape
+    row_idx = torch.arange(B, device=device)
+
+    log_p = F.log_softmax(logits, dim=1)
+    p = log_p.exp()
+
+    # -------------------------
+    # L1:  likelihood
+    # -------------------------
+    uncensored = (e == 1)
+    censored = ~uncensored
+
+    subj_terms = torch.zeros(B, device=device, dtype=dtype)
+
+    if uncensored.any():
+        subj_terms[uncensored] = log_p[row_idx[uncensored], t[uncensored]]
+
+    if censored.any():
+        time_grid = torch.arange(K, device=device).unsqueeze(0)          # [1, K]
+        censor_bins = t[censored].unsqueeze(1)                           # [Bc, 1]
+
+        # Original repo uses strictly future bins: time+1:
+        future_mask = (time_grid > censor_bins).to(dtype)                # [Bc, K]
+        prob_after_censor = (p[censored] * future_mask).sum(dim=1)
+
+        subj_terms[censored] = torch.log(
+            torch.clamp_min(prob_after_censor, torch.finfo(dtype).tiny)
+        )
+
+    l1 = -subj_terms.mean()
+
+    # -------------------------
+    # L2: ranking
+    # -------------------------
+    # CDF: F_i(t) = P(T <= t | x_i)
+    cdf = torch.cumsum(p, dim=1)                                         # [B, K]
+
+    # Matrix with entry [i, j] = F_j(t_i)
+    Fj_ti = cdf[:, t].T                                                  # [B, B]
+
+    # Vector with entry [i] = F_i(t_i)
+    Fi_ti = cdf[row_idx, t]                                              # [B]
+
+    # diff[i, j] = F_i(t_i) - F_j(t_i)
+    diff = Fi_ti.unsqueeze(1) - Fj_ti                                    # [B, B]
+
+    # acceptable[i, j] = 1 if event_i observed and t_i < t_j
+    acceptable = ((e == 1).unsqueeze(1) & (t.unsqueeze(1) < t.unsqueeze(0))).to(dtype)
+
+    # Original repo averages over j for each i, then sums over i
+    l2 = (acceptable * torch.exp(-diff / sigma)).mean(dim=1).sum()
+
+    loss = l1 + beta * l2
+
+    if average:
+        loss = loss / max(B, 1)
+
+    return loss
 
 # --- Loss Function Components ---
 def masked_logsumexp(x: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -206,26 +349,45 @@ def deepsurv_neg_log_likelihood(risk_scores: torch.Tensor, time: torch.Tensor, e
     return neg_log_likelihood
 
 
-def deephit_neg_log_likelihood(logits: torch.Tensor, target: torch.Tensor, average: bool = False) -> torch.Tensor:
-    """Negative log-likelihood for single-event DeepHit in discrete time."""
-    if logits.ndim != 2:
-        raise ValueError(f"Expected 2D logits tensor, got shape {logits.shape}")
-    target = target.float().to(device=logits.device)
-    if target.shape != logits.shape:
-        raise ValueError(f"Target shape {target.shape} must match logits shape {logits.shape}")
+def deephit_likelihood_loss(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    average: bool = False,
+) -> torch.Tensor:
+    bin_idx = target[:, 0].long()
+    event = target[:, 1].long()
 
-    log_probs = torch.log_softmax(logits, dim=1)
-    likelihood_terms = masked_logsumexp(log_probs, target, dim=1)
-    neg_log_likelihood = -likelihood_terms.sum()
+    device = logits.device
+    dtype = logits.dtype
+    B, K = logits.shape
+    row_idx = torch.arange(B, device=device)
+
+    log_p = F.log_softmax(logits, dim=1)
+    p = log_p.exp()
+
+    uncensored = (event == 1)
+    censored = ~uncensored
+
+    if uncensored.any():
+        l_unc = -log_p[row_idx[uncensored], bin_idx[uncensored]].sum()
+    else:
+        l_unc = torch.tensor(0.0, device=device, dtype=dtype)
+
+    if censored.any():
+        time_grid = torch.arange(K, device=device).unsqueeze(0)
+        censor_bins = bin_idx[censored].unsqueeze(1)
+        future_mask = (time_grid >= censor_bins).to(dtype)
+        surv_after_censor = (p[censored] * future_mask).sum(dim=1)
+        l_cens = -torch.log(torch.clamp_min(surv_after_censor, torch.finfo(dtype).tiny)).sum()
+    else:
+        l_cens = torch.tensor(0.0, device=device, dtype=dtype)
+
+    loss = l_unc + l_cens
 
     if average:
-        batch_size = target.size(0)
-        if batch_size > 0:
-            neg_log_likelihood = neg_log_likelihood / batch_size
-        else:
-            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
-    return neg_log_likelihood
+        loss = loss / max(B, 1)
 
+    return loss
 
 def deephit_survival(logits: torch.Tensor) -> torch.Tensor:
     """Converts DeepHit logits to survival probabilities P(T > t)."""

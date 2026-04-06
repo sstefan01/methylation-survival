@@ -4,13 +4,11 @@ import torch
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
-from typing import Tuple, Optional, Union, List
+from typing import Dict, Tuple, Optional, Union, List
 import os
 import warnings
 import shutil
 import torch.nn.functional as F
-
-
 
 # --- Connectivity Matrix Loading ---
 def load_connectivity_matrix(
@@ -132,148 +130,328 @@ def encode_survival(time: Union[torch.Tensor, np.ndarray],
         else: y[i, bin_idx:] = 1
     return y.squeeze(0) if y.shape[0] == 1 else y
 
+
+
+
+
 def encode_survival_deephit(
     time: Union[torch.Tensor, np.ndarray, float, int],
     event: Union[torch.Tensor, np.ndarray, int, bool],
-    bins: Union[torch.Tensor, np.ndarray]
-) -> torch.Tensor:
+    bins: Union[torch.Tensor, np.ndarray],
+) -> Dict[str, torch.Tensor]:
     """
-    Encode survival targets for single-risk DeepHit.
+    Single-risk DeepHit target encoding, adapted to cut-point bins and matched
+    as closely as possible to the original DeepHit repo.
 
-    Returns a tensor of shape [B, 2]:
-        target[:, 0] -> bin index (long)
-        target[:, 1] -> event indicator (0=censored, 1=event)
+    Returns a dict with:
+      - time_idx: [B] long, discrete interval index
+      - event:    [B] long, 1=event, 0=censored
+      - mask1:    [B, K] float, likelihood mask
+      - mask2:    [B, K] float, ranking mask
 
-    Notes
-    -----
-    - If bins has length M, valid bin indices are in {0, ..., M}.
-    - This matches an output layer with M + 1 logits.
-    - The exact censoring convention (>= bin_idx vs > bin_idx) is handled in the loss,
-      not here.
+    Conventions:
+      - K = len(bins) + 1 output bins
+      - time_idx is obtained with torch.bucketize(time, bins, right=True)
+
+    Original-repo-style masks:
+      - event at interval j:     mask1[i, j] = 1
+      - censored at interval j:  mask1[i, j+1:] = 1   (strictly future bins only)
+      - ranking mask:            mask2[i, :j+1] = 1   (cumulative up to j inclusive)
+
+    Note:
+      This is faithful to the original DeepHit repo's discrete-time convention.
+      With continuous times + cut points, censoring inside an interval is being
+      approximated by assigning the subject to one interval index first.
     """
+    if isinstance(bins, torch.Tensor):
+        device = bins.device
+    else:
+        device = torch.device("cpu")
 
-    # Convert to tensors
-    if isinstance(time, np.ndarray):
-        time = torch.from_numpy(np.atleast_1d(time))
-    elif isinstance(time, (float, int, np.number)):
-        time = torch.tensor([time], dtype=torch.float32)
+    time = torch.as_tensor(time, dtype=torch.float32, device=device).view(-1)
+    event = torch.as_tensor(event, dtype=torch.long, device=device).view(-1)
+    bins = torch.as_tensor(bins, dtype=torch.float32, device=device).view(-1)
 
-    if isinstance(event, np.ndarray):
-        event = torch.from_numpy(np.atleast_1d(event))
-    elif isinstance(event, (int, bool, np.bool_, np.number)):
-        event = torch.tensor([event], dtype=torch.int64)
+    if time.numel() != event.numel():
+        raise ValueError(f"time and event must have the same length, got {time.numel()} and {event.numel()}.")
 
-    if isinstance(bins, np.ndarray):
-        bins = torch.from_numpy(bins)
+    if not torch.all((event == 0) | (event == 1)):
+        raise ValueError("Single-risk DeepHit expects event indicators in {0, 1}.")
 
-    device = bins.device if hasattr(bins, "device") else torch.device("cpu")
+    K = bins.numel() + 1
+    B = time.numel()
 
-    time = time.to(device=device, dtype=torch.float32, non_blocking=True).view(-1)
-    event = event.to(device=device, dtype=torch.int64, non_blocking=True).view(-1)
-    bins = bins.to(device=device, dtype=torch.float32, non_blocking=True).view(-1)
+    # Map continuous time to a discrete interval index.
+    # With bins=[b1,...,bM], indices are in {0,...,M}.
+    time_idx = torch.bucketize(time, bins, right=True).long()
 
-    # Keep times inside supported range
-    if bins.numel() > 0:
-        time = torch.clamp(time, min=0.0, max=bins.max())
+    # Original-repo-style censoring uses strictly future bins only.
+    censored_in_last_bin = (event == 0) & (time_idx == K - 1)
+    if censored_in_last_bin.any():
+        bad_n = int(censored_in_last_bin.sum().item())
+        raise ValueError(
+            f"{bad_n} censored sample(s) fall in the last interval. "
+            "With original DeepHit censoring (strictly future bins only), "
+            "there is no valid future bin left. Add a later cut point / horizon."
+        )
 
-    # Bin assignment:
-    # with len(bins)=M, bucketize returns indices in {0,...,M}
-    bin_idx = torch.bucketize(time, bins, right=True).to(torch.int64)
+    grid = torch.arange(K, device=device).unsqueeze(0)  # [1, K]
 
-    # Pack as [bin_idx, event]
-    target = torch.stack([bin_idx, event], dim=1)
+    # Ranking mask: 1 up to and including the subject's interval.
+    mask2 = (grid <= time_idx.unsqueeze(1)).to(torch.float32)  # [B, K]
 
-    return target.squeeze(0) if target.shape[0] == 1 else target
+    # Likelihood mask.
+    mask1 = torch.zeros(B, K, dtype=torch.float32, device=device)
 
-def deephit_survival(logits: torch.Tensor) -> torch.Tensor:
-    """
-    Convert single-risk DeepHit logits to survival probabilities.
-    Returns shape [B, K].
-    """
-    p = torch.softmax(logits, dim=1)            # event-time mass
-    cdf = torch.cumsum(p, dim=1)                # P(T <= t)
-    surv = 1.0 - cdf + p                        # P(T >= t_bin)
-    surv = torch.clamp(surv, 0.0, 1.0)
-    return surv
+    # Uncensored: one-hot at the event interval.
+    uncensored = (event == 1)
+    if uncensored.any():
+        rows = torch.nonzero(uncensored, as_tuple=False).squeeze(1)
+        mask1[rows, time_idx[rows]] = 1.0
+
+    # Censored: strictly future intervals only, matching the original repo's time+1:.
+    censored = (event == 0)
+    if censored.any():
+        cens_rows = torch.nonzero(censored, as_tuple=False).squeeze(1)
+        mask1[cens_rows] = (grid > time_idx[cens_rows].unsqueeze(1)).to(torch.float32)
+
+    return {
+        "time_idx": time_idx,
+        "event": event,
+        "mask1": mask1,
+        "mask2": mask2,
+    }
+
 
 def deephit_loss(
     logits: torch.Tensor,
-    target: torch.Tensor,
+    target: Dict[str, torch.Tensor],
+    alpha: float = 1.0,
     beta: float = 1.0,
     sigma: float = 0.1,
     average: bool = False,
 ) -> torch.Tensor:
     """
-    Single-risk DeepHit loss, closer to the original repo:
-      total = L1 + beta * L2
+    Single-risk DeepHit loss with likelihood + ranking only.
 
-    target[:, 0] = bin index
-    target[:, 1] = event indicator (1=event, 0=censored)
+    This matches the original repo / paper structure:
+        total = alpha * L1 + beta * L2
+
+    where
+      L1 = log-likelihood term
+      L2 = ranking term
+
+    target must be the dict returned by encode_survival_deephit().
     """
+    if logits.ndim != 2:
+        raise ValueError(f"logits must have shape [B, K], got {tuple(logits.shape)}")
+
     device = logits.device
     dtype = logits.dtype
-
-    t = target[:, 0].long()
-    e = target[:, 1].long()
-
     B, K = logits.shape
-    row_idx = torch.arange(B, device=device)
 
-    log_p = F.log_softmax(logits, dim=1)
-    p = log_p.exp()
+    time_idx = target["time_idx"].to(device=device, dtype=torch.long).view(-1)
+    event = target["event"].to(device=device, dtype=torch.long).view(-1)
+    mask1 = target["mask1"].to(device=device, dtype=dtype)
+    mask2 = target["mask2"].to(device=device, dtype=dtype)
 
-    # -------------------------
-    # L1:  likelihood
-    # -------------------------
-    uncensored = (e == 1)
-    censored = ~uncensored
+    if time_idx.numel() != B or event.numel() != B or mask1.shape != (B, K) or mask2.shape != (B, K):
+        raise ValueError("Target shapes do not match logits.")
 
-    subj_terms = torch.zeros(B, device=device, dtype=dtype)
-
-    if uncensored.any():
-        subj_terms[uncensored] = log_p[row_idx[uncensored], t[uncensored]]
-
-    if censored.any():
-        time_grid = torch.arange(K, device=device).unsqueeze(0)          # [1, K]
-        censor_bins = t[censored].unsqueeze(1)                           # [Bc, 1]
-
-        # Original repo uses strictly future bins: time+1:
-        future_mask = (time_grid > censor_bins).to(dtype)                # [Bc, K]
-        prob_after_censor = (p[censored] * future_mask).sum(dim=1)
-
-        subj_terms[censored] = torch.log(
-            torch.clamp_min(prob_after_censor, torch.finfo(dtype).tiny)
-        )
-
-    l1 = -subj_terms.mean()
+    pmf = F.softmax(logits, dim=1)  # [B, K]
+    eps = torch.finfo(dtype).tiny
 
     # -------------------------
-    # L2: ranking
+    # L1: log-likelihood
+    # Original-repo style:
+    #   event    -> exact event bin
+    #   censored -> strictly future bins only
     # -------------------------
-    # CDF: F_i(t) = P(T <= t | x_i)
-    cdf = torch.cumsum(p, dim=1)                                         # [B, K]
+    selected_prob = (pmf * mask1).sum(dim=1)  # [B]
+    l1 = -torch.log(selected_prob.clamp_min(eps)).mean()
 
-    # Matrix with entry [i, j] = F_j(t_i)
-    Fj_ti = cdf[:, t].T                                                  # [B, B]
-
-    # Vector with entry [i] = F_i(t_i)
-    Fi_ti = cdf[row_idx, t]                                              # [B]
-
-    # diff[i, j] = F_i(t_i) - F_j(t_i)
-    diff = Fi_ti.unsqueeze(1) - Fj_ti                                    # [B, B]
-
+    # -------------------------
+    # L2: ranking loss
+    # Original-repo style for single risk
+    # risk_i(T_j) = sum_{m <= t_j} p_i(m)
+    # diff[i, j] = risk_i(T_i) - risk_j(T_i)
     # acceptable[i, j] = 1 if event_i observed and t_i < t_j
-    acceptable = ((e == 1).unsqueeze(1) & (t.unsqueeze(1) < t.unsqueeze(0))).to(dtype)
+    # -------------------------
+    risk_at_tj = pmf @ mask2.T                   # [B, B], entry [i, j] = risk_i(T_j)
+    risk_i_ti = risk_at_tj.diag().unsqueeze(1)  # [B, 1]
+    diff = risk_i_ti - risk_at_tj.T             # [B, B], entry [i, j] = risk_i(T_i) - risk_j(T_i)
 
-    # Original repo averages over j for each i, then sums over i
+    acceptable = ((event == 1).unsqueeze(1) & (time_idx.unsqueeze(1) < time_idx.unsqueeze(0))).to(dtype)
     l2 = (acceptable * torch.exp(-diff / sigma)).mean(dim=1).sum()
 
-    loss = l1 + beta * l2
+    loss = alpha * l1 + beta * l2
 
     if average:
         loss = loss / max(B, 1)
 
     return loss
+
+def deephit_survival(logits: torch.Tensor) -> torch.Tensor:
+    pmf = torch.softmax(logits, dim=1)
+    surv = torch.flip(torch.cumsum(torch.flip(pmf, dims=(1,)), dim=1), dims=(1,))
+    return torch.clamp(surv, 0.0, 1.0)
+
+# def encode_survival_deephit(time, event, bins):
+#     time = time.view(-1).float()
+#     event = event.view(-1).long()
+#     bins = bins.view(-1).float()
+
+#     # events -> right cut, censorings -> left cut
+#     idx_event = torch.bucketize(time, bins, right=True)
+#     idx_cens = torch.bucketize(time, bins, right=False) - 1
+
+#     idx = torch.where(event == 1, idx_event, idx_cens)
+#     idx = idx.clamp(min=0, max=len(bins))   # adjust edge handling if needed
+#     return torch.stack([idx.long(), event.long()], dim=1)
+
+
+# def encode_survival_deephit(
+#     time: Union[torch.Tensor, np.ndarray, float, int],
+#     event: Union[torch.Tensor, np.ndarray, int, bool],
+#     bins: Union[torch.Tensor, np.ndarray]
+# ) -> torch.Tensor:
+#     """
+#     Encode survival targets for single-risk DeepHit.
+
+#     Returns a tensor of shape [B, 2]:
+#         target[:, 0] -> bin index (long)
+#         target[:, 1] -> event indicator (0=censored, 1=event)
+
+#     Notes
+#     -----
+#     - If bins has length M, valid bin indices are in {0, ..., M}.
+#     - This matches an output layer with M + 1 logits.
+#     - The exact censoring convention (>= bin_idx vs > bin_idx) is handled in the loss,
+#       not here.
+#     """
+
+#     # Convert to tensors
+#     if isinstance(time, np.ndarray):
+#         time = torch.from_numpy(np.atleast_1d(time))
+#     elif isinstance(time, (float, int, np.number)):
+#         time = torch.tensor([time], dtype=torch.float32)
+
+#     if isinstance(event, np.ndarray):
+#         event = torch.from_numpy(np.atleast_1d(event))
+#     elif isinstance(event, (int, bool, np.bool_, np.number)):
+#         event = torch.tensor([event], dtype=torch.int64)
+
+#     if isinstance(bins, np.ndarray):
+#         bins = torch.from_numpy(bins)
+
+#     device = bins.device if hasattr(bins, "device") else torch.device("cpu")
+
+#     time = time.to(device=device, dtype=torch.float32, non_blocking=True).view(-1)
+#     event = event.to(device=device, dtype=torch.int64, non_blocking=True).view(-1)
+#     bins = bins.to(device=device, dtype=torch.float32, non_blocking=True).view(-1)
+
+#     # Keep times inside supported range
+#     if bins.numel() > 0:
+#         time = torch.clamp(time, min=0.0, max=bins.max())
+
+#     # Bin assignment:
+#     # with len(bins)=M, bucketize returns indices in {0,...,M}
+#     bin_idx = torch.bucketize(time, bins, right=True).to(torch.int64)
+
+#     # Pack as [bin_idx, event]
+#     target = torch.stack([bin_idx, event], dim=1)
+
+#     return target.squeeze(0) if target.shape[0] == 1 else target
+
+# def deephit_survival(logits: torch.Tensor) -> torch.Tensor:
+#     """
+#     Convert single-risk DeepHit logits to survival probabilities.
+#     Returns shape [B, K].
+#     """
+#     p = torch.softmax(logits, dim=1)            # event-time mass
+#     cdf = torch.cumsum(p, dim=1)                # P(T <= t)
+#     surv = 1.0 - cdf + p                        # P(T >= t_bin)
+#     surv = torch.clamp(surv, 0.0, 1.0)
+#     return surv
+
+# def deephit_loss(
+#     logits: torch.Tensor,
+#     target: torch.Tensor,
+#     beta: float = 1.0,
+#     sigma: float = 0.1,
+#     average: bool = False,
+# ) -> torch.Tensor:
+#     """
+#     Single-risk DeepHit loss, closer to the original repo:
+#       total = L1 + beta * L2
+
+#     target[:, 0] = bin index
+#     target[:, 1] = event indicator (1=event, 0=censored)
+#     """
+#     device = logits.device
+#     dtype = logits.dtype
+
+#     t = target[:, 0].long()
+#     e = target[:, 1].long()
+
+#     B, K = logits.shape
+#     row_idx = torch.arange(B, device=device)
+
+#     log_p = F.log_softmax(logits, dim=1)
+#     p = log_p.exp()
+
+#     # -------------------------
+#     # L1:  likelihood
+#     # -------------------------
+#     uncensored = (e == 1)
+#     censored = ~uncensored
+
+#     subj_terms = torch.zeros(B, device=device, dtype=dtype)
+
+#     if uncensored.any():
+#         subj_terms[uncensored] = log_p[row_idx[uncensored], t[uncensored]]
+
+#     if censored.any():
+#         time_grid = torch.arange(K, device=device).unsqueeze(0)          # [1, K]
+#         censor_bins = t[censored].unsqueeze(1)                           # [Bc, 1]
+
+#         # Original repo uses strictly future bins: time+1:
+#         future_mask = (time_grid >= censor_bins).to(dtype)                # [Bc, K]
+#         prob_after_censor = (p[censored] * future_mask).sum(dim=1)
+
+#         subj_terms[censored] = torch.log(
+#             torch.clamp_min(prob_after_censor, torch.finfo(dtype).tiny)
+#         )
+
+#     l1 = -subj_terms.mean()
+
+#     # -------------------------
+#     # L2: ranking
+#     # -------------------------
+#     # CDF: F_i(t) = P(T <= t | x_i)
+#     cdf = torch.cumsum(p, dim=1)                                         # [B, K]
+
+#     # Matrix with entry [i, j] = F_j(t_i)
+#     Fj_ti = cdf[:, t].T                                                  # [B, B]
+
+#     # Vector with entry [i] = F_i(t_i)
+#     Fi_ti = cdf[row_idx, t]                                              # [B]
+
+#     # diff[i, j] = F_i(t_i) - F_j(t_i)
+#     diff = Fi_ti.unsqueeze(1) - Fj_ti                                    # [B, B]
+
+#     # acceptable[i, j] = 1 if event_i observed and t_i < t_j
+#     acceptable = ((e == 1).unsqueeze(1) & (t.unsqueeze(1) < t.unsqueeze(0))).to(dtype)
+
+#     # Original repo averages over j for each i, then sums over i
+#     l2 = (acceptable * torch.exp(-diff / sigma)).mean(dim=1).sum()
+
+#     loss = l1 + beta * l2
+
+#     if average:
+#         loss = loss / max(B, 1)
+
+#     return loss
 
 # --- Loss Function Components ---
 def masked_logsumexp(x: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> torch.Tensor:

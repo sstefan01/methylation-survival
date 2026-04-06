@@ -209,7 +209,7 @@ def main(args):
             part1_dropout_rate=config['model']['part1']['dropout_rate'],
             num_clinical_features=config['model']['combined']['num_clinical_features'],
             clinical_feature_weight=config['model']['combined']['clinical_feature_weight'],
-            part2_num_time_bins=config['model']['part2']['num_time_bins'],
+            part2_num_time_bins=len(config['data']['time_bins']),
             part2_dropout_rate=config['model']['part2']['dropout_rate'],
             survival_head_type=survival_head_type
         ).to(device)

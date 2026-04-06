@@ -130,9 +130,12 @@ def main(args):
         val_from = recoding_rule['from']; val_to = recoding_rule['to']; m_train[m_train == val_from] = val_to
         y_train = encode_survival(all_train_t, all_train_e, time_bins) if survival_head_type in {'mtlr'} else None
         y_train = encode_survival_deephit(all_train_t, all_train_e, time_bins) if survival_head_type in {'deephit'} else None
-        if survival_head_type in {'mtlr', 'deephit'}:
+        if survival_head_type in {'mtlr'}:
             print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, Y={y_train.shape}")
             n_samples = y_train.size(dim=0)
+        elif survival_head_type in { 'deephit'}:
+            print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}")
+            n_samples = x_train.size(dim=0)
         else:
             print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, T={all_train_t.shape}, E={all_train_e.shape}")
             n_samples = all_train_t.size(dim=0)
@@ -200,31 +203,46 @@ def main(args):
     try:
         x_train = x_train.to(device)
         m_train = m_train.to(device)
+
         if y_train is not None:
-            y_train = y_train.to(device)
+            if survival_head_type == 'deephit':
+                y_train = {k: v.to(device) for k, v in y_train.items()}
+            else:
+                y_train = y_train.to(device)
+
         all_train_t = all_train_t.to(device)
         all_train_e = all_train_e.to(device)
         print("Moved training data tensors to device.")
-    except Exception as e: print(f"Error moving data to device {device}: {e}. Check memory."); sys.exit(1)
+    except Exception as e:
+        print(f"Error moving data to device {device}: {e}. Check memory.")
+        sys.exit(1)
+
     model.train()
     for epoch in range(epochs):
         loss = 0
         for bit in range(0, round(n_samples / batch_size) - 1):
-            batch_features = x_train[bit*batch_size:(1+bit)*batch_size,]
-            met_features = m_train[bit*batch_size:(1+bit)*batch_size,]
+            start = bit * batch_size
+            stop = (1 + bit) * batch_size
+
+            batch_features = x_train[start:stop,]
+            met_features = m_train[start:stop,]
+
             optimizer.zero_grad()
             out = model(batch_features.float(), met_features.float())
+
             if survival_head_type == 'mtlr':
-                lab_features = y_train[bit*batch_size:(1+bit)*batch_size,]
+                lab_features = y_train[start:stop,]
                 l = mtlr_neg_log_likelihood(out, lab_features, average=True)
+
             elif survival_head_type == 'deephit':
-                lab_features = y_train[bit*batch_size:(1+bit)*batch_size,]
-                l = deephit_loss(out, lab_features, beta = 1e-3, average=True)
-                # l = deephit_likelihood_loss(out, lab_features, average=True)
+                lab_features = {k: v[start:stop] for k, v in y_train.items()}
+                l = deephit_loss(out, lab_features, alpha=1.0, beta=1e-3, sigma=0.1, average=False)
+
             else:
-                batch_times = all_train_t[bit*batch_size:(1+bit)*batch_size,]
-                batch_events = all_train_e[bit*batch_size:(1+bit)*batch_size,]
+                batch_times = all_train_t[start:stop,]
+                batch_events = all_train_e[start:stop,]
                 l = deepsurv_neg_log_likelihood(out, batch_times, batch_events, average=True)
+
             l.backward()
             optimizer.step()
             loss += l.item()

@@ -113,6 +113,53 @@ def main(args):
     if len(t_test_np) != n_test_samples_pred: raise ValueError(f"CRITICAL: Row count mismatch!")
     else: n_test_samples = n_test_samples_pred; print(f"Verified matching row count ({n_test_samples}).")
 
+    # --- 3c. Single-Column Predictions (e.g., DeepSurv risk score) ---
+    if n_pred_times == 1:
+        print("\nDetected single prediction column. Treating it as a risk score and computing C-index only.")
+        risk_scores = predictions_k[:, 0]
+        valid_mask = ~np.isnan(risk_scores)
+        c_index = np.nan
+        if np.any(valid_mask):
+            t_test_c = t_test_np[valid_mask]
+            e_test_c = e_test_np[valid_mask].astype(bool)
+            risk_scores_c = risk_scores[valid_mask]
+            try:
+                c_index = concordance_index(t_test_c, -risk_scores_c, e_test_c)
+            except Exception as e:
+                print(f"Error C-index (single-column mode): {e}")
+        else:
+            print("Warning: All risk scores are NaN. Cannot calculate C-index.")
+
+        print(f"C-index: {c_index:.4f}")
+        print("Skipping time-dependent AUC and Brier score in single-column mode.")
+
+        if args.output_metrics:
+            results = {
+                "c_index": c_index if not np.isnan(c_index) else None,
+                "auc_mean_over_data_range": None,
+                "auc_mean_0.5_to_5_years": None,
+                "ibs": None,
+                "auc_times_evaluated": [],
+                "auc_values_at_evaluated_times": [],
+                "brier_score_times": [],
+                "brier_score_values": [],
+                "config_file": args.config,
+                "prediction_file": pred_path,
+                "test_cohort": reported_test_cohort
+            }
+            output_dir_metrics = os.path.dirname(args.output_metrics)
+            if output_dir_metrics and not os.path.exists(output_dir_metrics):
+                os.makedirs(output_dir_metrics)
+            try:
+                with open(args.output_metrics, 'w') as f:
+                    json.dump(results, f, indent=4)
+                print(f"Evaluation metrics saved to: {args.output_metrics}")
+            except Exception as e:
+                print(f"Error saving metrics to JSON: {e}")
+
+        print("\nEvaluation script completed.")
+        return
+
     # --- 4. Load True Survival Data (Training Set - Needed for AUC) ---
     print("Loading true survival data for training cohorts...")
     t_train_list, e_train_list = [], []

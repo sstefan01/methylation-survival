@@ -8,6 +8,7 @@ import os
 import sys
 import random
 import torch.optim as optim
+import torch.nn.functional as F
 import warnings # For suppressing Dask warnings if needed
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -25,7 +26,11 @@ try:
         load_survival_data, # Assumes returns t, e, m, ids (torch tensors/np array)
         normalize_instance_wise, # Instance-wise normalizer
         encode_survival, # Target encoder
-        mtlr_neg_log_likelihood # Loss function
+        mtlr_neg_log_likelihood, # Loss function
+        deephit_loss,
+        deephit_likelihood_loss,
+        encode_survival_deephit,
+        deepsurv_neg_log_likelihood
     )
 except ImportError as e:
     print(f"Error importing project modules: {e}")
@@ -87,6 +92,7 @@ def main(args):
         clinical_col = config['data']['clinical_feature_col']; id_col = config['data'].get('id_column', None)
         time_bins = torch.tensor(config['data']['time_bins'], dtype=torch.float32).to(device) # Load bins to device
         recoding_rule = config['run_setup']['metastasis_recoding']; model_input_dim = config['model']['part1']['input_dim']
+        survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
 
         # ... (load features cohort by cohort into feature_data dict) ...
         feature_data = {ftype: [] for ftype in feature_types}; survival_data = {'t': [], 'e': [], 'm': []}
@@ -122,9 +128,26 @@ def main(args):
         # ... (prepare m_train, y_train) ...
         m_train = all_train_m.reshape(-1, 1)
         val_from = recoding_rule['from']; val_to = recoding_rule['to']; m_train[m_train == val_from] = val_to
-        y_train = encode_survival(all_train_t, all_train_e, time_bins)
-        print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, Y={y_train.shape}")
-        n_samples = y_train.size(dim=0)
+        if survival_head_type == "mtlr":
+            y_train = encode_survival(all_train_t, all_train_e, time_bins)
+
+        elif survival_head_type == "deephit":
+            y_train = encode_survival_deephit(all_train_t, all_train_e, time_bins)
+
+        elif survival_head_type == "deepsurv":
+            y_train = None
+
+        else:
+            raise ValueError(f"Unsupported survival_head_type: {survival_head_type}")
+        if survival_head_type in {'mtlr'}:
+            print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, Y={y_train.shape}")
+            n_samples = y_train.size(dim=0)
+        elif survival_head_type in { 'deephit'}:
+            print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}")
+            n_samples = x_train.size(dim=0)
+        else:
+            print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, T={all_train_t.shape}, E={all_train_e.shape}")
+            n_samples = all_train_t.size(dim=0)
 
     except Exception as e: print(f"Error during data loading/preprocessing: {e}"); sys.exit(1)
 
@@ -166,7 +189,8 @@ def main(args):
             num_clinical_features=config['model']['combined']['num_clinical_features'],
             clinical_feature_weight=config['model']['combined']['clinical_feature_weight'],
             part2_num_time_bins=config['model']['part2']['num_time_bins'],
-            part2_dropout_rate=config['model']['part2']['dropout_rate']
+            part2_dropout_rate=config['model']['part2']['dropout_rate'],
+            survival_head_type=survival_head_type
         ).to(device)
     except Exception as e: print(f"Error instantiating model: {e}"); sys.exit(1)
 
@@ -188,19 +212,46 @@ def main(args):
     try:
         x_train = x_train.to(device)
         m_train = m_train.to(device)
-        y_train = y_train.to(device)
+
+        if y_train is not None:
+            if survival_head_type == 'deephit':
+                y_train = {k: v.to(device) for k, v in y_train.items()}
+            else:
+                y_train = y_train.to(device)
+
+        all_train_t = all_train_t.to(device)
+        all_train_e = all_train_e.to(device)
         print("Moved training data tensors to device.")
-    except Exception as e: print(f"Error moving data to device {device}: {e}. Check memory."); sys.exit(1)
+    except Exception as e:
+        print(f"Error moving data to device {device}: {e}. Check memory.")
+        sys.exit(1)
+
     model.train()
     for epoch in range(epochs):
         loss = 0
-        for bit in range(0,round(y_train.size(dim=0)/batch_size)-1):
-            batch_features = x_train[bit*batch_size:(1+bit)*batch_size,]
-            met_features = m_train[bit*batch_size:(1+bit)*batch_size,]
-            lab_features = y_train[bit*batch_size:(1+bit)*batch_size,]
+        for bit in range(0, round(n_samples / batch_size) - 1):
+            start = bit * batch_size
+            stop = (1 + bit) * batch_size
+
+            batch_features = x_train[start:stop,]
+            met_features = m_train[start:stop,]
+
             optimizer.zero_grad()
             out = model(batch_features.float(), met_features.float())
-            l = mtlr_neg_log_likelihood(out, lab_features, average=True)
+
+            if survival_head_type == 'mtlr':
+                lab_features = y_train[start:stop,]
+                l = mtlr_neg_log_likelihood(out, lab_features, average=True)
+
+            elif survival_head_type == 'deephit':
+                lab_features = {k: v[start:stop] for k, v in y_train.items()}
+                l = deephit_loss(out, lab_features, alpha=1.0, beta=1e-3, sigma=0.1, average=False)
+
+            else:
+                batch_times = all_train_t[start:stop,]
+                batch_events = all_train_e[start:stop,]
+                l = deepsurv_neg_log_likelihood(out, batch_times, batch_events, average=True)
+
             l.backward()
             optimizer.step()
             loss += l.item()
@@ -217,6 +268,8 @@ def main(args):
     print(f"Saving trained model state_dict to: {save_path}")
     try: torch.save(model.state_dict(), save_path); print("Model state_dict saved successfully.")
     except Exception as e: print(f"Error saving model state_dict: {e}")
+
+
 
 
 if __name__ == "__main__":

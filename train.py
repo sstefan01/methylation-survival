@@ -128,8 +128,17 @@ def main(args):
         # ... (prepare m_train, y_train) ...
         m_train = all_train_m.reshape(-1, 1)
         val_from = recoding_rule['from']; val_to = recoding_rule['to']; m_train[m_train == val_from] = val_to
-        y_train = encode_survival(all_train_t, all_train_e, time_bins) if survival_head_type in {'mtlr'} else None
-        y_train = encode_survival_deephit(all_train_t, all_train_e, time_bins) if survival_head_type in {'deephit'} else None
+        if survival_head_type == "mtlr":
+            y_train = encode_survival(all_train_t, all_train_e, time_bins)
+
+        elif survival_head_type == "deephit":
+            y_train = encode_survival_deephit(all_train_t, all_train_e, time_bins)
+
+        elif survival_head_type == "deepsurv":
+            y_train = None
+
+        else:
+            raise ValueError(f"Unsupported survival_head_type: {survival_head_type}")
         if survival_head_type in {'mtlr'}:
             print(f"Training data prepared: X={x_train.shape}, M={m_train.shape}, Y={y_train.shape}")
             n_samples = y_train.size(dim=0)

@@ -42,7 +42,7 @@ run_setup:
   training_cohorts: ["cav", "northcott", "sturm"]
   test_cohort: "jones"
   # Define which feature types to load and concatenate
-  feature_types: ["beta"] #, "cnv"]
+  feature_types: ["beta", "cnv"] #, "cnv"]
   # Whether to include metastasis status as an additional model input
   include_metastasis: True
   # Define how the clinical feature (metastasis) is recoded
@@ -50,7 +50,7 @@ run_setup:
 
 # --- Model Architecture and Hyperparameters ---
 model:
-  survival_head_type: "deep_surv" # options: "mtlr", "deepsurv", "deephit"
+  survival_head_type: "mtlr" # options: "mtlr", "deepsurv", "deephit"
   part1:
     input_dim: 373759
     layer_dims: [16067, 1602, 421, 64]
@@ -58,7 +58,6 @@ model:
     c2_input_offset: 357692
 
   part2:
-    num_time_bins: 15 # 16
     dropout_rate: 0.2927068153242416
 
   combined:

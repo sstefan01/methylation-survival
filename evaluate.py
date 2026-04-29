@@ -27,7 +27,7 @@ try: from sklearn.metrics import brier_score_loss
 except ImportError: print("Error: 'scikit-learn' package not found."); sys.exit(1)
 
 # --- Project specific imports ---
-try: from utils import load_survival_data
+try: from utils import load_survival_data, derive_time_bins
 except ImportError as e: print(f"Error importing project modules: {e}"); sys.exit(1)
 except Exception as e: print(f"An unexpected error during project import: {e}"); sys.exit(1)
 
@@ -177,8 +177,11 @@ def main(args):
     except Exception as e: print(f"Error loading training survival data: {e}"); sys.exit(1)
 
     # --- 5. Prepare Time Points ---
-    try: time_bins = np.array(config['data']['time_bins'])
-    except KeyError: print("Error: 'data.time_bins' not found."); sys.exit(1)
+    try:
+        survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
+        time_bins = np.array(derive_time_bins(config, survival_head_type))
+    except Exception as e:
+        print(f"Error deriving time bins: {e}"); sys.exit(1)
     pred_times = np.concatenate(([0.0], time_bins))
     if len(pred_times) != n_pred_times: raise ValueError("Mismatch pred times / prediction columns.")
     eval_times = np.arange(0.1, 5.01, 0.1)

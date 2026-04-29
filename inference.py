@@ -25,7 +25,8 @@ try:
         load_survival_data_inference,
         normalize_instance_wise,
         mtlr_survival,
-        deephit_survival
+        deephit_survival,
+        derive_time_bins
     )
 except ImportError as e:
     print(f"Error importing project modules: {e}")
@@ -77,6 +78,7 @@ def main(args):
         model_input_dim = None
         id_col_name = config['data'].get('id_column', None)
         survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
+        derived_time_bins = derive_time_bins(config, survival_head_type)
     except KeyError as e:
         print(f"Error: Missing required key {e} in config file.")
         sys.exit(1)
@@ -232,7 +234,7 @@ def main(args):
             part1_dropout_rate=config['model']['part1']['dropout_rate'],
             num_clinical_features=num_clinical_features,
             clinical_feature_weight=config['model']['combined']['clinical_feature_weight'],
-            part2_num_time_bins=len(config['data']['time_bins']),
+            part2_num_time_bins=len(derived_time_bins),
             part2_dropout_rate=config['model']['part2']['dropout_rate'],
             survival_head_type=survival_head_type
         ).to(device)
@@ -292,7 +294,7 @@ def main(args):
     # Generate Time Point Headers
     try:
         if survival_head_type in {'mtlr', 'deephit'}:
-            time_bins = np.array(config['data']['time_bins'])
+            time_bins = np.array(derived_time_bins)
             pred_times = np.concatenate(([0.0], time_bins))
             if len(pred_times) != final_predictions.shape[1]:
                 raise ValueError("Mismatch time_bins / prediction columns.")

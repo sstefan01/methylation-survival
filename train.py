@@ -30,7 +30,8 @@ try:
         deephit_loss,
         deephit_likelihood_loss,
         encode_survival_deephit,
-        deepsurv_neg_log_likelihood
+        deepsurv_neg_log_likelihood,
+        derive_time_bins
     )
 except ImportError as e:
     print(f"Error importing project modules: {e}")
@@ -54,7 +55,7 @@ def load_config(config_path):
         required_sections = ['data', 'run_setup', 'model', 'training']
         for section in required_sections:
             if section not in config: raise ValueError(f"Missing required section '{section}'")
-        required_data_keys = ['time_column', 'event_column', 'clinical_feature_col', 'time_bins']
+        required_data_keys = ['time_column', 'event_column', 'clinical_feature_col']
         for key in required_data_keys:
              if key not in config['data']: raise ValueError(f"Missing required key 'data.{key}'")
         required_run_setup_keys = ['training_cohorts', 'feature_types']
@@ -91,9 +92,10 @@ def main(args):
         include_metastasis = config['run_setup'].get('include_metastasis', True)
         time_col = config['data']['time_column']; event_col = config['data']['event_column']
         clinical_col = config['data']['clinical_feature_col']; id_col = config['data'].get('id_column', None)
-        time_bins = torch.tensor(config['data']['time_bins'], dtype=torch.float32).to(device) # Load bins to device
         recoding_rule = config['run_setup']['metastasis_recoding']
         survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
+        derived_time_bins_np = derive_time_bins(config, survival_head_type)
+        time_bins = torch.tensor(derived_time_bins_np, dtype=torch.float32).to(device) # Derived bins
 
         # ... (load features cohort by cohort into feature_data dict) ...
         feature_data = {ftype: [] for ftype in feature_types}; survival_data = {'t': [], 'e': [], 'm': []}
@@ -206,7 +208,7 @@ def main(args):
             part1_dropout_rate=config['model']['part1']['dropout_rate'],
             num_clinical_features=num_clinical_features,
             clinical_feature_weight=config['model']['combined']['clinical_feature_weight'],
-            part2_num_time_bins=config['model']['part2']['num_time_bins'],
+            part2_num_time_bins=len(derived_time_bins_np),
             part2_dropout_rate=config['model']['part2']['dropout_rate'],
             survival_head_type=survival_head_type
         ).to(device)

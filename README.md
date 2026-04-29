@@ -14,28 +14,51 @@ The codebase allows for model training, running inference on test data using a p
 
 ## Requirements
 
-* Python (>=3.9 recommended, tested with environment specified below)
-* Conda package manager
-* Git (for cloning the repository)
+* Python 3.10.12 tested
+* Git, for cloning the repository
+* `pip` and `venv` or another Python environment manager
+
+Conda may be used, but the code was tested using a minimal Python virtual environment.
 
 ## Installation & Setup
 
-1.  **Clone the Repository:**
+1. **Clone the repository**
     ```bash
     git clone https://github.com/sstefan01/methylation-survival.git
     cd methylation-survival
     ```
 
-2.  **Create Conda Environment:** Create the environment using the provided file. This installs all necessary dependencies with specific versions.
-    ```bash
-    conda env create -f environment.yml
-    ```
-    *(This might take up to 10 minutes)*
+2. **Create and activate a Python environment**
 
-3.  **Activate Environment:** Activate the newly created environment (the name is specified inside `environment.yml`, usually defaults to the name in the file, e.g., `submission_env`).
+    We recommend using Python 3.10.12. For example, using `venv`:
+
     ```bash
-    conda activate <environment_name_from_yaml>
+    python3.10 -m venv .minimal_req
+    source .minimal_req/bin/activate
     ```
+
+    Then upgrade core packaging tools:
+
+    ```bash
+    python -m pip install --upgrade pip setuptools wheel
+    ```
+
+3. **Install PyTorch and PyTorch-dependent extensions**
+
+    These packages should be installed sequentially. In particular, `torch` must be installed before `torch-scatter` and `torch-sparse`.
+
+    ```bash
+    python -m pip install torch==2.1.2
+    python -m pip install torch-scatter torch-sparse -f https://pytorch-geometric.com/whl/torch-2.1.2+cpu.html
+    python -m pip install sparselinear==0.0.5
+    ```
+
+4. **Install remaining Python dependencies**
+
+    ```bash
+    python -m pip install -r requirements.txt
+    ```
+
 
 ## Data Acquisition and Placement
 
@@ -101,9 +124,20 @@ The `config.yaml` file controls various aspects of the scripts, including file p
 * **Run Setup:** The `run_setup:` section defines which cohorts are used for training (`training_cohorts`) and which single cohort is used for testing (`test_cohort`) when running `train.py`/`inference.py`/`evaluate.py`. It also lists the `feature_types` to load and concatenate.
 * **Hyperparameters:** Model structure and training parameters are defined here.
 
+
+
 ## Usage
 
-Ensure your Conda environment is activated (`conda activate <environment_name_from_yaml>`) before running any scripts. All commands should be run from the project root directory.
+Ensure your Python environment is activated before running any scripts. If using venv:
+
+```bash
+source .minimal_req/bin/activate
+```
+Or if using conda:
+
+```bash
+conda activate <environment_name>
+```
 
 **1. Training (Optional - if not using pre-trained model)**
 
@@ -159,19 +193,18 @@ Ensure your Conda environment is activated (`conda activate <environment_name_fr
 - **Operating system**: macOS 10.15+, Ubuntu 18.04+, or Windows 10/11 (with WSL2)  
 - **CPU**: any 64‑bit Intel or Apple‑Silicon processor  
 - **Memory**: ≥ 8 GB RAM  
-- **Python**: ≥ 3.8  
-- **Conda**: ≥ 4.10  
+- **Python**: 3.10 recommended; tested with Python 3.10.12
 - **Disk space**: ≥ 2 GB for code, dependencies, and example data  
 - **GPU**: none required (CPU only)  
 
 ### Tested environment
-- **Operating system**: macOS 14.0 (Ventura) (Build 23A344)  
-- **Hardware**: Apple M1 Pro (arm64), 16 GB RAM  
-- **Python**: 3.9.21  
-- **Conda**: 23.3.1
+
+- **Python**: 3.10.12
+- **PyTorch**: 2.1.2
+- **Installation method**: Python virtual environment with `pip`
 
 ### Dependencies
-All Python packages are pinned in `environment.yml`.  
+Core Python dependencies are pinned in `requirements.txt`. PyTorch, `torch-scatter`, `torch-sparse`, and `sparselinear` should be installed sequentially as described above.
 
 ## License
 

@@ -150,6 +150,8 @@ class CombinedSurvivalModel(nn.Module):
 
     def forward(self, x_main: torch.Tensor, x_clinical: torch.Tensor) -> torch.Tensor:
         features = self.p1(x_main)
+        if x_clinical is None or x_clinical.numel() == 0:
+            return self.p2(features)
         if x_clinical.ndim == 1:
             x_clinical = x_clinical.unsqueeze(1)
         if x_clinical.shape[1] != self.clinical_weight.numel() and x_clinical.shape[1] != 1:

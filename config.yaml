@@ -3,7 +3,7 @@
 # --- Data Files and Settings ---
 data:
   # --- Connectivity Matrix ---
-  conn_mat_path: "data/conn_mat_beta.csv"
+  conn_mat_beta_path: "data/conn_mat_beta.csv"
   conn_mat_is_one_based: True
 
   # --- Raw Data Paths  ---
@@ -42,13 +42,15 @@ run_setup:
   training_cohorts: ["cav", "northcott", "sturm"]
   test_cohort: "jones"
   # Define which feature types to load and concatenate
-  feature_types: ["beta", "cnv"]
+  feature_types: ["beta"] #, "cnv"]
+  # Whether to include metastasis status as an additional model input
+  include_metastasis: True
   # Define how the clinical feature (metastasis) is recoded
   metastasis_recoding: { "from": 0, "to": -1 }
 
 # --- Model Architecture and Hyperparameters ---
 model:
-  survival_head_type: "mtlr" # options: "mtlr", "deepsurv", "deephit"
+  survival_head_type: "deep_surv" # options: "mtlr", "deepsurv", "deephit"
   part1:
     input_dim: 373759
     layer_dims: [16067, 1602, 421, 64]

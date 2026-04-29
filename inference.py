@@ -73,7 +73,8 @@ def main(args):
         feature_types = config['run_setup']['feature_types']
         clinical_col_name = config['data']['clinical_feature_col']
         recoding_rule = config['run_setup']['metastasis_recoding']
-        model_input_dim = config['model']['part1']['input_dim']
+        include_metastasis = config['run_setup'].get('include_metastasis', True)
+        model_input_dim = None
         id_col_name = config['data'].get('id_column', None)
         survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
     except KeyError as e:
@@ -100,20 +101,7 @@ def main(args):
     print(f"Using feature types: {feature_types}")
     if id_col_name: print(f"Expecting patient ID column: '{id_col_name}'")
 
-    # --- 4. Load Connectivity Matrix ---
-    try:
-        conn_mat = load_connectivity_matrix(
-            csv_path=config['data']['conn_mat_path'],
-            out_features_s1=config['model']['part1']['layer_dims'][0],
-            in_features_s1=model_input_dim,
-            c2_input_offset=config['model']['part1']['c2_input_offset'],
-            is_one_based=config['data']['conn_mat_is_one_based']
-        ).to(device)
-    except Exception as e:
-        print(f"Error loading connectivity matrix: {e}")
-        sys.exit(1)
-
-    # --- 5. Load Test Data Features ---
+    # --- 4. Load Test Data Features ---
     print(f"Loading features for test cohort '{test_cohort}'...")
     x_test_beta = None
     x_test_cnv = None
@@ -135,7 +123,7 @@ def main(args):
         print(f"Error loading test features: {e}")
         sys.exit(1)
 
-    # --- 6. Apply Instance-wise Normalization ---
+    # --- 5. Apply Instance-wise Normalization ---
     x_test_norm_list = [] # List to hold normalized feature tensors
 
     if x_test_beta is not None:
@@ -150,14 +138,44 @@ def main(args):
     if not x_test_norm_list:
         raise ValueError("No features were loaded or normalized.")
 
-    # --- 7. Concatenate Normalized Features ---
+    # --- 6. Concatenate Normalized Features ---
     x_test_norm_concat = torch.cat(x_test_norm_list, dim=1)
     print(f"Concatenated normalized test features shape: {x_test_norm_concat.shape}")
 
-    # Check if final dimension matches model input expectation
-    if x_test_norm_concat.shape[1] != model_input_dim:
-        raise ValueError(f"Dimension Mismatch: Final normalized features dim ({x_test_norm_concat.shape[1]}) "
-                         f"!= model input dim ({model_input_dim})")
+    model_input_dim = x_test_norm_concat.shape[1]
+    print(f"Derived model input_dim from selected feature_types: {model_input_dim}")
+
+    # --- 7. Load Connectivity Matrix ---
+    try:
+        out_features = config['model']['part1']['layer_dims'][0]
+        one_based = config['data']['conn_mat_is_one_based']
+        conn_parts = []
+
+        if x_test_beta is not None:
+            beta_conn_path = config["data"].get("conn_mat_beta_path", config["data"].get("conn_mat_path"))
+            if not beta_conn_path:
+                raise ValueError("Missing data.conn_mat_beta_path for beta features.")
+            conn_beta = load_connectivity_matrix(
+                csv_path=beta_conn_path,
+                out_features_s1=out_features,
+                in_features_s1=model_input_dim,
+                c2_input_offset=0,
+                is_one_based=one_based,
+            )
+            conn_parts.append(conn_beta[:, :-out_features])
+
+        conn_loaded = torch.cat(conn_parts, dim=1).long() if conn_parts else torch.empty((2, 0), dtype=torch.long)
+        if x_test_cnv is not None:
+            c2_offset = x_test_beta.shape[1] if x_test_beta is not None else 0
+            c2_output = torch.arange(out_features, dtype=torch.long)
+            c2_input = torch.arange(out_features, dtype=torch.long) + c2_offset
+            c2 = torch.stack((c2_output, c2_input), dim=0)
+            conn_mat = torch.cat((conn_loaded, c2), dim=1).long().to(device)
+        else:
+            conn_mat = conn_loaded.to(device)
+    except Exception as e:
+        print(f"Error loading connectivity matrix: {e}")
+        sys.exit(1)
 
     # --- 8. Load Clinical Feature and Patient IDs ---
     print(f"Loading clinical data and IDs for test cohort '{test_cohort}'...")
@@ -184,16 +202,20 @@ def main(args):
          print(f"Error loading clinical/survival data: {e}")
          sys.exit(1)
 
-    # Reshape and recode metastasis
-    m_test = m_test.reshape(-1, 1)
-    val_from = config['run_setup']['metastasis_recoding']['from']
-    val_to = config['run_setup']['metastasis_recoding']['to']
-    print(f"Recoding '{clinical_col_name}': {val_from} -> {val_to}")
-    m_test[m_test == val_from] = val_to
-    print(f"Prepared metastasis shape: {m_test.shape}")
+    # Reshape and optionally recode metastasis
+    n_samples = x_test_norm_concat.shape[0]
+    if include_metastasis:
+        m_test = m_test.reshape(-1, 1)
+        val_from = config['run_setup']['metastasis_recoding']['from']
+        val_to = config['run_setup']['metastasis_recoding']['to']
+        print(f"Recoding '{clinical_col_name}': {val_from} -> {val_to}")
+        m_test[m_test == val_from] = val_to
+        print(f"Prepared metastasis shape: {m_test.shape}")
+    else:
+        m_test = torch.zeros((n_samples, 0), dtype=m_test.dtype)
+        print("Metastasis input disabled via run_setup.include_metastasis=False.")
 
     # Check sample counts
-    n_samples = x_test_norm_concat.shape[0]
     if n_samples != m_test.shape[0]:
         raise ValueError(f"Sample count mismatch: features ({n_samples}) vs metastasis ({m_test.shape[0]})")
     if patient_ids_test is not None and n_samples != len(patient_ids_test):
@@ -202,12 +224,13 @@ def main(args):
     # --- 9. Instantiate Model ---
     print("Instantiating model structure...")
     try:
+        num_clinical_features = 1 if include_metastasis else 0
         model = CombinedSurvivalModel(
-            part1_input_dim=config['model']['part1']['input_dim'],
+            part1_input_dim=model_input_dim,
             conn_mat=conn_mat,
             part1_layer_dims=config['model']['part1']['layer_dims'],
             part1_dropout_rate=config['model']['part1']['dropout_rate'],
-            num_clinical_features=config['model']['combined']['num_clinical_features'],
+            num_clinical_features=num_clinical_features,
             clinical_feature_weight=config['model']['combined']['clinical_feature_weight'],
             part2_num_time_bins=len(config['data']['time_bins']),
             part2_dropout_rate=config['model']['part2']['dropout_rate'],

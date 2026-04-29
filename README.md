@@ -138,6 +138,7 @@ Or if using conda:
 ```bash
 conda activate <environment_name>
 ```
+The commands below cover the standard training, inference, evaluation, and plotting workflow. For more detailed examples, including custom model inference, external cohort inference, alternative feature combinations, and survival head options, see [`usage_examples.md`](usage_examples.md).
 
 **1. Training (Optional - if not using pre-trained model)**
 
@@ -164,6 +165,8 @@ conda activate <environment_name>
         python inference.py --config config.yaml --model_path path/to/your/model_statedict.pt --output results/my_custom_predictions.csv
         ```
 * **Output:** This generates a prediction CSV file (e.g., `results/survival_predictions.csv` or the path specified by `--output`) containing patient IDs and predicted survival probabilities at different time points.
+
+
 
 **3. Evaluation (Calculating Metrics)**
 

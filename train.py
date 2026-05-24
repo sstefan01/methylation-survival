@@ -74,17 +74,17 @@ def load_config(config_path):
 def main(args):
     """Runs the training process."""
 
-    # --- 1. Load Configuration & Basic Setup ---
+    # --- Load Configuration & Basic Setup ---
     config = load_config(args.config)
     config['training']['epochs'] = args.epochs or config['training']['epochs']
 
-    # --- 2. Setup Device & Seed ---
+    # --- Setup Device & Seed ---
     device = torch.device("cpu") # Force CPU
     print(f"Using device: {device}")
     seed = 42 ; torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
     print(f"Set random seed: {seed}")
 
-    # --- 3. Load & Prepare Training Data ---
+    # --- Load & Prepare Training Data ---
     print("Loading and preparing training data...")
     try: # Load data and prepare x_train, m_train, y_train
         # ... (get config values: cohorts, features, columns, bins, etc.) ...
@@ -159,7 +159,7 @@ def main(args):
     except Exception as e: print(f"Error during data loading/preprocessing: {e}"); sys.exit(1)
 
 
-    # --- 4. Load Connectivity Matrix ---
+    # ---  Load Connectivity Matrix ---
     print("Loading connectivity matrix...")
     try:
         out_features = config['model']['part1']['layer_dims'][0]
@@ -197,7 +197,7 @@ def main(args):
         sys.exit(1)
 
 
-    # --- 5. Instantiate Model ---
+    # --- Instantiate Model ---
     print("Instantiating model...")
     try:
         num_clinical_features = 1 if include_metastasis else 0
@@ -215,7 +215,7 @@ def main(args):
     except Exception as e: print(f"Error instantiating model: {e}"); sys.exit(1)
 
 
-    # --- 6. Setup Optimizer ---
+    # ---  Setup Optimizer ---
     try:
          lr = config['training']['learning_rate']; wd = config['training']['weight_decay']; opt_name = config['training']['optimizer']
          if opt_name.lower() == "adam": optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
@@ -224,7 +224,7 @@ def main(args):
     except Exception as e: print(f"Error setting up optimizer: {e}"); sys.exit(1)
 
 
-    # --- 7. Training Loop ---
+    # ---  Training Loop ---
     epochs = config['training']['epochs']
     batch_size = config['training']['batch_size']
     print(f"\n--- Starting Training for {epochs} Epochs ---")
@@ -278,7 +278,7 @@ def main(args):
 
     print("--- Training Finished ---")
 
-    # --- 8. Save Model State Dictionary ---
+    # ---  Save Model State Dictionary ---
     output_dir = config['training']['output_model_dir']; output_name = config['training']['output_model_name']
     if "statedict" not in output_name.lower(): # Append _statedict if needed
          base, ext = os.path.splitext(output_name)

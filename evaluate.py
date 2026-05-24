@@ -18,7 +18,6 @@ src_dir = os.path.join(script_dir, "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
-# --- Third-party imports ---
 try: from lifelines.utils import concordance_index
 except ImportError: print("Error: 'lifelines' package not found."); sys.exit(1)
 try: from sksurv.metrics import cumulative_dynamic_auc; from sksurv.util import Surv
@@ -63,7 +62,7 @@ def load_config(config_path):
 def main(args):
     """Runs the evaluation process assuming prediction rows align with true data rows."""
 
-    # --- 1. Load Configuration ---
+    # ---  Load Configuration ---
     config = load_config(args.config)
     pred_path = args.pred_path # Use required argument
     test_cohort_from_config = config["run_setup"]["test_cohort"]
@@ -81,7 +80,7 @@ def main(args):
         else:
             reported_test_cohort = test_cohort_from_config
 
-    # --- 2. Load Predictions CSV ---
+    # ---  Load Predictions CSV ---
     if not os.path.exists(pred_path): raise FileNotFoundError(f"Prediction CSV not found: {pred_path}")
     print(f"Loading predictions from CSV: {pred_path}")
     try:
@@ -90,7 +89,7 @@ def main(args):
         print(f"Loaded predictions for {n_test_samples_pred} samples...")
     except Exception as e: print(f"Error loading predictions CSV {pred_path}: {e}"); raise
 
-    # --- 3. Load True Survival Data (Test Set) ---
+    # ---  Load True Survival Data (Test Set) ---
     try:
         
         print(f"Evaluating Test Cohort: '{reported_test_cohort}'")
@@ -109,11 +108,11 @@ def main(args):
         t_test_np = t_test_tensor.numpy(); e_test_np = e_test_tensor.numpy()
     except Exception as e: print(f"Error loading test survival data: {e}"); sys.exit(1)
 
-    # --- 3b. Row Count Check ---
+    # ---  Row Count Check ---
     if len(t_test_np) != n_test_samples_pred: raise ValueError(f"CRITICAL: Row count mismatch!")
     else: n_test_samples = n_test_samples_pred; print(f"Verified matching row count ({n_test_samples}).")
 
-    # --- 3c. Single-Column Predictions (e.g., DeepSurv risk score) ---
+    # ---  Single-Column Predictions (e.g., DeepSurv risk score) ---
     if n_pred_times == 1:
         print("\nDetected single prediction column. Treating it as a risk score and computing C-index only.")
         risk_scores = predictions_k[:, 0]
@@ -160,7 +159,7 @@ def main(args):
         print("\nEvaluation script completed.")
         return
 
-    # --- 4. Load True Survival Data (Training Set - Needed for AUC) ---
+    # ---  Load True Survival Data (Training Set - Needed for AUC) ---
     print("Loading true survival data for training cohorts...")
     t_train_list, e_train_list = [], []
     try:
@@ -176,7 +175,7 @@ def main(args):
         print(f"Loaded combined training survival data for {len(t_train_np)} samples.")
     except Exception as e: print(f"Error loading training survival data: {e}"); sys.exit(1)
 
-    # --- 5. Prepare Time Points ---
+    # ---  Prepare Time Points ---
     try:
         survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
         time_bins = np.array(derive_time_bins(config, survival_head_type))
@@ -187,7 +186,7 @@ def main(args):
     eval_times = np.arange(0.1, 5.01, 0.1)
     print(f"Evaluating metrics at {len(eval_times)} time points...")
 
-    # --- 6. Interpolate Survival Probabilities ---
+    # --- Interpolate Survival Probabilities ---
     print("Interpolating survival probabilities...")
     interpolated_probs = np.zeros((n_test_samples, len(eval_times)))
     for i in range(n_test_samples):
@@ -198,7 +197,7 @@ def main(args):
     interpolated_probs = np.clip(interpolated_probs, 0.0, 1.0)
     if np.isnan(interpolated_probs).any(): print("Warning: NaNs found after interpolation.")
 
-    # --- 6b. Apply Smoothing
+    # --- Apply Smoothing
     window = 10
     kernel = np.ones(window) / window
     pad_left = window // 2
@@ -217,7 +216,7 @@ def main(args):
         y_mon = np.minimum.accumulate(y_conv)
         smoothed_interpolated_probs[i, :] = np.clip(y_mon, 0.0, 1.0)
 
-    # --- 7. Calculate Concordance Index (C-index) ---
+    # --- Calculate Concordance Index (C-index) ---
     # Uses survival probabilities at t=5
     print("\n--- Calculating C-index ---")
     eval_time_cindex = 5.0; c_index = np.nan; risk_scores_cindex = None
@@ -238,7 +237,7 @@ def main(args):
          else: print(f"Cannot get C-index prob at t={eval_time_cindex:.1f}.")
     print(f"C-index: {c_index:.4f}")
 
-    # --- 8. Calculate Time-Dependent AUC  ---
+    # --- Calculate Time-Dependent AUC  ---
     print("\n--- Calculating Time-dependent AUC ---")
     auc_mean_all = np.nan; auc_values_all = None; auc_eval_times_filtered = np.array([])
     auc_mean_target_range = np.nan
@@ -315,7 +314,7 @@ def main(args):
         auc_mean_all = np.nan if 'auc_mean_all' not in locals() else auc_mean_all; # ... etc ...
 
 
-    # --- 9. Calculate Brier Score ---
+    # --- Calculate Brier Score ---
     print("\n--- Calculating Brier Score ---")
     ibs = np.nan; brier_scores_dict = {}
     try:
@@ -330,7 +329,7 @@ def main(args):
     except Exception as e: print(f"Error calculating Brier score: {e}")
 
 
-    # --- 10. Save or Display Results ---
+    # ---  Save or Display Results ---
     if args.output_metrics:
         auc_times_list_save = auc_eval_times_filtered.tolist()
         results = {

@@ -57,18 +57,18 @@ def load_config(config_path):
 def main(args):
     """Runs the inference process."""
 
-    # --- 1. Load Configuration ---
+    # --- Load Configuration ---
     config = load_config(args.config)
     # Override paths/settings if command-line arguments are provided
     config['inference']['input_model_path'] = args.model_path or config['inference']['input_model_path']
     config['inference']['output_predictions_path'] = args.output or config['inference']['output_predictions_path']
     config['run_setup']['test_cohort'] = args.test_cohort or config['run_setup']['test_cohort']
 
-    # --- 2. Setup Device ---
+    # --- Setup Device ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # --- 3. Identify Test Cohort / Features / Columns ---
+    # --- Identify Test Cohort / Features / Columns ---
     try:
         test_cohort = config['run_setup']['test_cohort']
         feature_types = config['run_setup']['feature_types']
@@ -103,7 +103,7 @@ def main(args):
     print(f"Using feature types: {feature_types}")
     if id_col_name: print(f"Expecting patient ID column: '{id_col_name}'")
 
-    # --- 4. Load Test Data Features ---
+    # --- Load Test Data Features ---
     print(f"Loading features for test cohort '{test_cohort}'...")
     x_test_beta = None
     x_test_cnv = None
@@ -125,7 +125,7 @@ def main(args):
         print(f"Error loading test features: {e}")
         sys.exit(1)
 
-    # --- 5. Apply Instance-wise Normalization ---
+    # --- Apply Instance-wise Normalization ---
     x_test_norm_list = [] # List to hold normalized feature tensors
 
     if x_test_beta is not None:
@@ -140,14 +140,14 @@ def main(args):
     if not x_test_norm_list:
         raise ValueError("No features were loaded or normalized.")
 
-    # --- 6. Concatenate Normalized Features ---
+    # --- Concatenate Normalized Features ---
     x_test_norm_concat = torch.cat(x_test_norm_list, dim=1)
     print(f"Concatenated normalized test features shape: {x_test_norm_concat.shape}")
 
     model_input_dim = x_test_norm_concat.shape[1]
     print(f"Derived model input_dim from selected feature_types: {model_input_dim}")
 
-    # --- 7. Load Connectivity Matrix ---
+    # --- Load Connectivity Matrix ---
     try:
         out_features = config['model']['part1']['layer_dims'][0]
         one_based = config['data']['conn_mat_is_one_based']
@@ -179,7 +179,7 @@ def main(args):
         print(f"Error loading connectivity matrix: {e}")
         sys.exit(1)
 
-    # --- 8. Load Clinical Feature and Patient IDs ---
+    # --- Load Clinical Feature and Patient IDs ---
     print(f"Loading clinical data and IDs for test cohort '{test_cohort}'...")
     patient_ids_test = None # Initialize
     try:
@@ -223,7 +223,7 @@ def main(args):
     if patient_ids_test is not None and n_samples != len(patient_ids_test):
         raise ValueError(f"Sample count mismatch: features ({n_samples}) vs patient ids ({len(patient_ids_test)})")
 
-    # --- 9. Instantiate Model ---
+    # --- Instantiate Model ---
     print("Instantiating model structure...")
     try:
         num_clinical_features = 1 if include_metastasis else 0
@@ -242,7 +242,7 @@ def main(args):
         print(f"Error instantiating model: {e}")
         sys.exit(1)
 
-    # --- 10. Load Pre-trained Weights (State Dictionary) ---
+    # --- Load Pre-trained Weights (State Dictionary) ---
     model_path = config['inference']['input_model_path']
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model state_dict file not found: {model_path}")
@@ -261,7 +261,7 @@ def main(args):
         print(f"Error loading state_dict: {e}")
         raise
 
-    # --- 11. Prepare DataLoader ---
+    # --- Prepare DataLoader ---
     batch_size = config['inference']['batch_size']
     x_test_final = x_test_norm_concat.to(device)
     m_test = m_test.to(device)
@@ -269,7 +269,7 @@ def main(args):
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     print(f"Using batch size: {batch_size} for inference.")
 
-    # --- 12. Run Inference Loop ---
+    # --- Run Inference Loop ---
     model.eval()
     all_predictions = []
     print("Starting inference loop...")
@@ -287,7 +287,7 @@ def main(args):
                  print(f"  Processed batch {i+1}/{len(test_loader)}")
     print("Inference loop finished.")
 
-    # --- 13. Combine Predictions and Prepare for CSV ---
+    # --- Combine Predictions and Prepare for CSV ---
     print("Combining batch predictions...")
     final_predictions = np.concatenate(all_predictions, axis=0)
 
@@ -317,7 +317,7 @@ def main(args):
     else:
         index_flag = True # Write default pandas index if IDs missing or column name unknown
 
-    # --- 14. Save Predictions as CSV ---
+    # --- Save Predictions as CSV ---
     output_path = config['inference']['output_predictions_path']
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
@@ -349,7 +349,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, help="Override path to save output predictions (.csv).")
     parser.add_argument("--test_cohort", type=str, help="Override the test cohort specified in the config's run_setup section.")
     
-    # New arguments for custom dataset paths
+    # arguments for custom dataset paths
     parser.add_argument("--custom_beta", type=str, help="Path to custom beta features CSV. Overrides config path.")
     parser.add_argument("--custom_cnv", type=str, help="Path to custom CNV features CSV. Overrides config path.")
     parser.add_argument("--custom_surv", type=str, help="Path to custom survival/clinical data CSV. Overrides config path.")

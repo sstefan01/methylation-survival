@@ -94,9 +94,9 @@ Several data files are required to run the different scripts. Data and model wei
     │   ├── beta_sturm.csv
     │   ├── cnv_sturm.csv
     │   ├── surv_sturm.csv
-    │   ├── beta_icgc.csv           
-    │   ├── cnv_icgc.csv
-    │   ├── surv_icgc.csv
+    │   ├── beta_hovestadt.csv           
+    │   ├── cnv_hovestadt.csv
+    │   ├── surv_hovestadt.csv
     │   └── ... (other cohort files if using) ...
     ├── models/
     │   └── mantismb_model_statedict.pt # Pre-trained model weights

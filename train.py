@@ -30,7 +30,8 @@ try:
         deephit_loss,
         deephit_likelihood_loss,
         encode_survival_deephit,
-        deepsurv_neg_log_likelihood
+        deepsurv_neg_log_likelihood,
+        derive_time_bins
     )
 except ImportError as e:
     print(f"Error importing project modules: {e}")
@@ -54,7 +55,7 @@ def load_config(config_path):
         required_sections = ['data', 'run_setup', 'model', 'training']
         for section in required_sections:
             if section not in config: raise ValueError(f"Missing required section '{section}'")
-        required_data_keys = ['time_column', 'event_column', 'clinical_feature_col', 'time_bins', 'conn_mat_path']
+        required_data_keys = ['time_column', 'event_column', 'clinical_feature_col']
         for key in required_data_keys:
              if key not in config['data']: raise ValueError(f"Missing required key 'data.{key}'")
         required_run_setup_keys = ['training_cohorts', 'feature_types']
@@ -73,26 +74,28 @@ def load_config(config_path):
 def main(args):
     """Runs the training process."""
 
-    # --- 1. Load Configuration & Basic Setup ---
+    # --- Load Configuration & Basic Setup ---
     config = load_config(args.config)
     config['training']['epochs'] = args.epochs or config['training']['epochs']
 
-    # --- 2. Setup Device & Seed ---
+    # --- Setup Device & Seed ---
     device = torch.device("cpu") # Force CPU
     print(f"Using device: {device}")
     seed = 42 ; torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
     print(f"Set random seed: {seed}")
 
-    # --- 3. Load & Prepare Training Data ---
+    # --- Load & Prepare Training Data ---
     print("Loading and preparing training data...")
     try: # Load data and prepare x_train, m_train, y_train
         # ... (get config values: cohorts, features, columns, bins, etc.) ...
         training_cohorts = config['run_setup']['training_cohorts']; feature_types = config['run_setup']['feature_types']
+        include_metastasis = config['run_setup'].get('include_metastasis', True)
         time_col = config['data']['time_column']; event_col = config['data']['event_column']
         clinical_col = config['data']['clinical_feature_col']; id_col = config['data'].get('id_column', None)
-        time_bins = torch.tensor(config['data']['time_bins'], dtype=torch.float32).to(device) # Load bins to device
-        recoding_rule = config['run_setup']['metastasis_recoding']; model_input_dim = config['model']['part1']['input_dim']
+        recoding_rule = config['run_setup']['metastasis_recoding']
         survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
+        derived_time_bins_np = derive_time_bins(config, survival_head_type)
+        time_bins = torch.tensor(derived_time_bins_np, dtype=torch.float32).to(device) # Derived bins
 
         # ... (load features cohort by cohort into feature_data dict) ...
         feature_data = {ftype: [] for ftype in feature_types}; survival_data = {'t': [], 'e': [], 'm': []}
@@ -123,11 +126,15 @@ def main(args):
         if not norm_features_list: raise ValueError("No feature data.")
         x_train = torch.cat(norm_features_list, dim=1)
         print(f"Final training features shape: {x_train.shape}")
-        if x_train.shape[1] != model_input_dim: raise ValueError("Final feature dim mismatch.")
+        model_input_dim = x_train.shape[1]
+        print(f"Derived model input_dim from selected feature_types: {model_input_dim}")
 
         # ... (prepare m_train, y_train) ...
-        m_train = all_train_m.reshape(-1, 1)
-        val_from = recoding_rule['from']; val_to = recoding_rule['to']; m_train[m_train == val_from] = val_to
+        if include_metastasis:
+            m_train = all_train_m.reshape(-1, 1)
+            val_from = recoding_rule['from']; val_to = recoding_rule['to']; m_train[m_train == val_from] = val_to
+        else:
+            m_train = torch.zeros((expected_samples, 0), dtype=all_train_m.dtype)
         if survival_head_type == "mtlr":
             y_train = encode_survival(all_train_t, all_train_e, time_bins)
 
@@ -152,23 +159,35 @@ def main(args):
     except Exception as e: print(f"Error during data loading/preprocessing: {e}"); sys.exit(1)
 
 
-    # --- 4. Load Connectivity Matrix ---
+    # ---  Load Connectivity Matrix ---
     print("Loading connectivity matrix...")
     try:
-        conn_mat_path = config['data']['conn_mat_path']
-        # Get features from config (ensure model section is loaded and keys exist)
         out_features = config['model']['part1']['layer_dims'][0]
-        in_features = config['model']['part1']['input_dim']
-        offset = config['model']['part1']['c2_input_offset']
         one_based = config['data']['conn_mat_is_one_based']
+        c2_offset = torch.cat(feature_data["beta"], dim=0).shape[1] if ("beta" in feature_types and "cnv" in feature_types) else 0
 
-        conn_mat = load_connectivity_matrix(
-            csv_path=conn_mat_path,
-            out_features_s1=out_features, # Pass value
-            in_features_s1=in_features,   # Pass value
-            c2_input_offset=offset,       # Pass value
-            is_one_based=one_based        # Pass value
-        ).to(device) # Move to device
+        conn_parts = []
+        if "beta" in feature_types:
+            beta_conn_path = config["data"].get("conn_mat_beta_path", config["data"].get("conn_mat_path"))
+            if not beta_conn_path:
+                raise ValueError("Missing data.conn_mat_beta_path for beta features.")
+            conn_beta = load_connectivity_matrix(
+                csv_path=beta_conn_path,
+                out_features_s1=out_features,
+                in_features_s1=model_input_dim,
+                c2_input_offset=0,
+                is_one_based=one_based,
+            )
+            conn_parts.append(conn_beta[:, :-out_features])
+
+        conn_loaded = torch.cat(conn_parts, dim=1).long() if conn_parts else torch.empty((2, 0), dtype=torch.long)
+        if "cnv" in feature_types:
+            c2_output = torch.arange(out_features, dtype=torch.long)
+            c2_input = torch.arange(out_features, dtype=torch.long) + c2_offset
+            c2 = torch.stack((c2_output, c2_input), dim=0)
+            conn_mat = torch.cat((conn_loaded, c2), dim=1).long().to(device)
+        else:
+            conn_mat = conn_loaded.to(device)
         print("Connectivity matrix loaded.")
     except KeyError as e:
         print(f"Error: Missing required key {e} in config file needed for loading connectivity matrix.")
@@ -178,24 +197,25 @@ def main(args):
         sys.exit(1)
 
 
-    # --- 5. Instantiate Model ---
+    # --- Instantiate Model ---
     print("Instantiating model...")
     try:
+        num_clinical_features = 1 if include_metastasis else 0
         model = CombinedSurvivalModel(
-            part1_input_dim=config['model']['part1']['input_dim'],
+            part1_input_dim=model_input_dim,
             conn_mat=conn_mat, # Pass the loaded conn_mat
             part1_layer_dims=config['model']['part1']['layer_dims'],
             part1_dropout_rate=config['model']['part1']['dropout_rate'],
-            num_clinical_features=config['model']['combined']['num_clinical_features'],
+            num_clinical_features=num_clinical_features,
             clinical_feature_weight=config['model']['combined']['clinical_feature_weight'],
-            part2_num_time_bins=config['model']['part2']['num_time_bins'],
+            part2_num_time_bins=len(derived_time_bins_np),
             part2_dropout_rate=config['model']['part2']['dropout_rate'],
             survival_head_type=survival_head_type
         ).to(device)
     except Exception as e: print(f"Error instantiating model: {e}"); sys.exit(1)
 
 
-    # --- 6. Setup Optimizer ---
+    # ---  Setup Optimizer ---
     try:
          lr = config['training']['learning_rate']; wd = config['training']['weight_decay']; opt_name = config['training']['optimizer']
          if opt_name.lower() == "adam": optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
@@ -204,7 +224,7 @@ def main(args):
     except Exception as e: print(f"Error setting up optimizer: {e}"); sys.exit(1)
 
 
-    # --- 7. Training Loop ---
+    # ---  Training Loop ---
     epochs = config['training']['epochs']
     batch_size = config['training']['batch_size']
     print(f"\n--- Starting Training for {epochs} Epochs ---")
@@ -258,7 +278,7 @@ def main(args):
 
     print("--- Training Finished ---")
 
-    # --- 8. Save Model State Dictionary ---
+    # ---  Save Model State Dictionary ---
     output_dir = config['training']['output_model_dir']; output_name = config['training']['output_model_name']
     if "statedict" not in output_name.lower(): # Append _statedict if needed
          base, ext = os.path.splitext(output_name)

@@ -25,7 +25,8 @@ try:
         load_survival_data_inference,
         normalize_instance_wise,
         mtlr_survival,
-        deephit_survival
+        deephit_survival,
+        derive_time_bins
     )
 except ImportError as e:
     print(f"Error importing project modules: {e}")
@@ -56,26 +57,28 @@ def load_config(config_path):
 def main(args):
     """Runs the inference process."""
 
-    # --- 1. Load Configuration ---
+    # --- Load Configuration ---
     config = load_config(args.config)
     # Override paths/settings if command-line arguments are provided
     config['inference']['input_model_path'] = args.model_path or config['inference']['input_model_path']
     config['inference']['output_predictions_path'] = args.output or config['inference']['output_predictions_path']
     config['run_setup']['test_cohort'] = args.test_cohort or config['run_setup']['test_cohort']
 
-    # --- 2. Setup Device ---
+    # --- Setup Device ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # --- 3. Identify Test Cohort / Features / Columns ---
+    # --- Identify Test Cohort / Features / Columns ---
     try:
         test_cohort = config['run_setup']['test_cohort']
         feature_types = config['run_setup']['feature_types']
         clinical_col_name = config['data']['clinical_feature_col']
         recoding_rule = config['run_setup']['metastasis_recoding']
-        model_input_dim = config['model']['part1']['input_dim']
+        include_metastasis = config['run_setup'].get('include_metastasis', True)
+        model_input_dim = None
         id_col_name = config['data'].get('id_column', None)
         survival_head_type = config['model'].get('survival_head_type', 'mtlr').lower()
+        derived_time_bins = derive_time_bins(config, survival_head_type)
     except KeyError as e:
         print(f"Error: Missing required key {e} in config file.")
         sys.exit(1)
@@ -83,7 +86,7 @@ def main(args):
 
     test_cohort_from_config = config["run_setup"]["test_cohort"]
 
-    standard_test_cohorts = {"cav", "northcott", "sturm", "jones"}
+    standard_test_cohorts = {"cav", "northcott", "sturm", "hovestadt"}
     using_custom_dataset = any([
         args.custom_surv is not None,
     ])
@@ -100,20 +103,7 @@ def main(args):
     print(f"Using feature types: {feature_types}")
     if id_col_name: print(f"Expecting patient ID column: '{id_col_name}'")
 
-    # --- 4. Load Connectivity Matrix ---
-    try:
-        conn_mat = load_connectivity_matrix(
-            csv_path=config['data']['conn_mat_path'],
-            out_features_s1=config['model']['part1']['layer_dims'][0],
-            in_features_s1=model_input_dim,
-            c2_input_offset=config['model']['part1']['c2_input_offset'],
-            is_one_based=config['data']['conn_mat_is_one_based']
-        ).to(device)
-    except Exception as e:
-        print(f"Error loading connectivity matrix: {e}")
-        sys.exit(1)
-
-    # --- 5. Load Test Data Features ---
+    # --- Load Test Data Features ---
     print(f"Loading features for test cohort '{test_cohort}'...")
     x_test_beta = None
     x_test_cnv = None
@@ -135,7 +125,7 @@ def main(args):
         print(f"Error loading test features: {e}")
         sys.exit(1)
 
-    # --- 6. Apply Instance-wise Normalization ---
+    # --- Apply Instance-wise Normalization ---
     x_test_norm_list = [] # List to hold normalized feature tensors
 
     if x_test_beta is not None:
@@ -150,16 +140,46 @@ def main(args):
     if not x_test_norm_list:
         raise ValueError("No features were loaded or normalized.")
 
-    # --- 7. Concatenate Normalized Features ---
+    # --- Concatenate Normalized Features ---
     x_test_norm_concat = torch.cat(x_test_norm_list, dim=1)
     print(f"Concatenated normalized test features shape: {x_test_norm_concat.shape}")
 
-    # Check if final dimension matches model input expectation
-    if x_test_norm_concat.shape[1] != model_input_dim:
-        raise ValueError(f"Dimension Mismatch: Final normalized features dim ({x_test_norm_concat.shape[1]}) "
-                         f"!= model input dim ({model_input_dim})")
+    model_input_dim = x_test_norm_concat.shape[1]
+    print(f"Derived model input_dim from selected feature_types: {model_input_dim}")
 
-    # --- 8. Load Clinical Feature and Patient IDs ---
+    # --- Load Connectivity Matrix ---
+    try:
+        out_features = config['model']['part1']['layer_dims'][0]
+        one_based = config['data']['conn_mat_is_one_based']
+        conn_parts = []
+
+        if x_test_beta is not None:
+            beta_conn_path = config["data"].get("conn_mat_beta_path", config["data"].get("conn_mat_path"))
+            if not beta_conn_path:
+                raise ValueError("Missing data.conn_mat_beta_path for beta features.")
+            conn_beta = load_connectivity_matrix(
+                csv_path=beta_conn_path,
+                out_features_s1=out_features,
+                in_features_s1=model_input_dim,
+                c2_input_offset=0,
+                is_one_based=one_based,
+            )
+            conn_parts.append(conn_beta[:, :-out_features])
+
+        conn_loaded = torch.cat(conn_parts, dim=1).long() if conn_parts else torch.empty((2, 0), dtype=torch.long)
+        if x_test_cnv is not None:
+            c2_offset = x_test_beta.shape[1] if x_test_beta is not None else 0
+            c2_output = torch.arange(out_features, dtype=torch.long)
+            c2_input = torch.arange(out_features, dtype=torch.long) + c2_offset
+            c2 = torch.stack((c2_output, c2_input), dim=0)
+            conn_mat = torch.cat((conn_loaded, c2), dim=1).long().to(device)
+        else:
+            conn_mat = conn_loaded.to(device)
+    except Exception as e:
+        print(f"Error loading connectivity matrix: {e}")
+        sys.exit(1)
+
+    # --- Load Clinical Feature and Patient IDs ---
     print(f"Loading clinical data and IDs for test cohort '{test_cohort}'...")
     patient_ids_test = None # Initialize
     try:
@@ -184,32 +204,37 @@ def main(args):
          print(f"Error loading clinical/survival data: {e}")
          sys.exit(1)
 
-    # Reshape and recode metastasis
-    m_test = m_test.reshape(-1, 1)
-    val_from = config['run_setup']['metastasis_recoding']['from']
-    val_to = config['run_setup']['metastasis_recoding']['to']
-    print(f"Recoding '{clinical_col_name}': {val_from} -> {val_to}")
-    m_test[m_test == val_from] = val_to
-    print(f"Prepared metastasis shape: {m_test.shape}")
+    # Reshape and optionally recode metastasis
+    n_samples = x_test_norm_concat.shape[0]
+    if include_metastasis:
+        m_test = m_test.reshape(-1, 1)
+        val_from = config['run_setup']['metastasis_recoding']['from']
+        val_to = config['run_setup']['metastasis_recoding']['to']
+        print(f"Recoding '{clinical_col_name}': {val_from} -> {val_to}")
+        m_test[m_test == val_from] = val_to
+        print(f"Prepared metastasis shape: {m_test.shape}")
+    else:
+        m_test = torch.zeros((n_samples, 0), dtype=m_test.dtype)
+        print("Metastasis input disabled via run_setup.include_metastasis=False.")
 
     # Check sample counts
-    n_samples = x_test_norm_concat.shape[0]
     if n_samples != m_test.shape[0]:
         raise ValueError(f"Sample count mismatch: features ({n_samples}) vs metastasis ({m_test.shape[0]})")
     if patient_ids_test is not None and n_samples != len(patient_ids_test):
         raise ValueError(f"Sample count mismatch: features ({n_samples}) vs patient ids ({len(patient_ids_test)})")
 
-    # --- 9. Instantiate Model ---
+    # --- Instantiate Model ---
     print("Instantiating model structure...")
     try:
+        num_clinical_features = 1 if include_metastasis else 0
         model = CombinedSurvivalModel(
-            part1_input_dim=config['model']['part1']['input_dim'],
+            part1_input_dim=model_input_dim,
             conn_mat=conn_mat,
             part1_layer_dims=config['model']['part1']['layer_dims'],
             part1_dropout_rate=config['model']['part1']['dropout_rate'],
-            num_clinical_features=config['model']['combined']['num_clinical_features'],
+            num_clinical_features=num_clinical_features,
             clinical_feature_weight=config['model']['combined']['clinical_feature_weight'],
-            part2_num_time_bins=len(config['data']['time_bins']),
+            part2_num_time_bins=len(derived_time_bins),
             part2_dropout_rate=config['model']['part2']['dropout_rate'],
             survival_head_type=survival_head_type
         ).to(device)
@@ -217,7 +242,7 @@ def main(args):
         print(f"Error instantiating model: {e}")
         sys.exit(1)
 
-    # --- 10. Load Pre-trained Weights (State Dictionary) ---
+    # --- Load Pre-trained Weights (State Dictionary) ---
     model_path = config['inference']['input_model_path']
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model state_dict file not found: {model_path}")
@@ -236,7 +261,7 @@ def main(args):
         print(f"Error loading state_dict: {e}")
         raise
 
-    # --- 11. Prepare DataLoader ---
+    # --- Prepare DataLoader ---
     batch_size = config['inference']['batch_size']
     x_test_final = x_test_norm_concat.to(device)
     m_test = m_test.to(device)
@@ -244,7 +269,7 @@ def main(args):
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     print(f"Using batch size: {batch_size} for inference.")
 
-    # --- 12. Run Inference Loop ---
+    # --- Run Inference Loop ---
     model.eval()
     all_predictions = []
     print("Starting inference loop...")
@@ -262,14 +287,14 @@ def main(args):
                  print(f"  Processed batch {i+1}/{len(test_loader)}")
     print("Inference loop finished.")
 
-    # --- 13. Combine Predictions and Prepare for CSV ---
+    # --- Combine Predictions and Prepare for CSV ---
     print("Combining batch predictions...")
     final_predictions = np.concatenate(all_predictions, axis=0)
 
     # Generate Time Point Headers
     try:
         if survival_head_type in {'mtlr', 'deephit'}:
-            time_bins = np.array(config['data']['time_bins'])
+            time_bins = np.array(derived_time_bins)
             pred_times = np.concatenate(([0.0], time_bins))
             if len(pred_times) != final_predictions.shape[1]:
                 raise ValueError("Mismatch time_bins / prediction columns.")
@@ -292,7 +317,7 @@ def main(args):
     else:
         index_flag = True # Write default pandas index if IDs missing or column name unknown
 
-    # --- 14. Save Predictions as CSV ---
+    # --- Save Predictions as CSV ---
     output_path = config['inference']['output_predictions_path']
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
@@ -324,7 +349,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, help="Override path to save output predictions (.csv).")
     parser.add_argument("--test_cohort", type=str, help="Override the test cohort specified in the config's run_setup section.")
     
-    # New arguments for custom dataset paths
+    # arguments for custom dataset paths
     parser.add_argument("--custom_beta", type=str, help="Path to custom beta features CSV. Overrides config path.")
     parser.add_argument("--custom_cnv", type=str, help="Path to custom CNV features CSV. Overrides config path.")
     parser.add_argument("--custom_surv", type=str, help="Path to custom survival/clinical data CSV. Overrides config path.")

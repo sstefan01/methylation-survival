@@ -99,6 +99,50 @@ def load_connectivity_matrix(
     print("Connectivity matrix loaded and validated successfully.")
     return conn_mat_final
 
+
+
+def derive_time_bins(config: dict, survival_head_type: str) -> np.ndarray:
+    """
+    Derive time bins from config and, for DeepHit, append one extra cutoff
+    after the last observed OS training time.
+    """
+    if 'data' not in config or 'time_bins' not in config['data']:
+        raise KeyError("Config missing 'data.time_bins'.")
+
+    bins = np.asarray(config['data']['time_bins'], dtype=np.float32).copy()
+    if bins.ndim != 1 or bins.size == 0:
+        raise ValueError("data.time_bins must be a non-empty 1D list.")
+
+    head = (survival_head_type or '').lower()
+    if head != 'deephit':
+        return bins
+
+    train_cohorts = config.get('run_setup', {}).get('training_cohorts', [])
+    os_time_col = config.get('data', {}).get('os_time_column')
+    if not train_cohorts or not os_time_col:
+        raise ValueError("DeepHit requires run_setup.training_cohorts and data.os_time_column to derive extra time bin.")
+
+    os_times = []
+    for cohort in train_cohorts:
+        surv_path_key = f"{cohort}_surv_path"
+        surv_path = config['data'].get(surv_path_key)
+        if not surv_path:
+            raise KeyError(f"Missing data.{surv_path_key} for DeepHit time bin derivation.")
+        df = pd.read_csv(surv_path)
+        if os_time_col not in df.columns:
+            raise KeyError(f"Column '{os_time_col}' not found in {surv_path}.")
+        os_times.append(df[os_time_col].to_numpy(dtype=np.float32))
+
+    all_os_times = np.concatenate(os_times)
+    if all_os_times.size == 0:
+        raise ValueError("No OS times found in training data for DeepHit time bin derivation.")
+
+    extra_bin = float(np.nanmax(all_os_times) + 1.0)
+    if extra_bin <= float(bins[-1]):
+        extra_bin = float(bins[-1] + 1.0)
+
+    return np.concatenate([bins, np.array([extra_bin], dtype=np.float32)])
+
 # --- Target Encoding ---
 def encode_survival(time: Union[torch.Tensor, np.ndarray],
                     event: Union[torch.Tensor, np.ndarray],

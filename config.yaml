@@ -8,9 +8,9 @@ data:
 
   # --- Raw Data Paths  ---
 
-  jones_beta_path: "data/beta_jones.csv"
-  jones_cnv_path: "data/cnv_jones.csv"
-  jones_surv_path: "data/surv_jones.csv"
+  hovestadt_beta_path: "data/beta_hovestadt.csv"
+  hovestadt_cnv_path: "data/cnv_hovestadt.csv"
+  hovestadt_surv_path: "data/surv_hovestadt.csv"
 
   cav_beta_path: "data/beta_cavalli.csv"
   cav_cnv_path: "data/cnv_cavalli.csv"
@@ -45,7 +45,7 @@ data:
 run_setup:
   # Define cohorts for training and the single cohort for testing in this run
   training_cohorts: ["cav", "northcott", "sturm"]
-  test_cohort: "jones" # jones is the calibration data, use "custom" for inference on your own data
+  test_cohort: "hovestadt" # hovestadt is the calibration data, use "custom" for inference on your own data
   # Define which feature types to load and concatenate
   feature_types: ["beta", "cnv"] # options: ["beta"] , ["cnv"], ["beta", "cnv"]
   # Whether to include metastasis status as an additional model input

@@ -68,7 +68,7 @@ def main(args):
     pred_path = args.pred_path # Use required argument
     test_cohort_from_config = config["run_setup"]["test_cohort"]
 
-    standard_test_cohorts = {"cav", "northcott", "sturm", "jones"}
+    standard_test_cohorts = {"cav", "northcott", "sturm", "hovestadt"}
     using_custom_dataset = any([
         args.custom_surv is not None,
     ])
